@@ -56,9 +56,15 @@ export default function TasksPage() {
       const res = await fetch(`${apiUrl}/api/dashboard/bookings`);
       const data = await res.json();
 
-      const bookings = (data.bookings || []).sort(
-        (a: Booking, b: Booking) => b.created_at - a.created_at
-      );
+      // Sort: processing first, then completed, newest first within each group
+      const bookings = (data.bookings || []).sort((a: Booking, b: Booking) => {
+        // First, prioritize processing tasks
+        if (a.status === 'processing' && b.status !== 'processing') return -1;
+        if (a.status !== 'processing' && b.status === 'processing') return 1;
+
+        // Within same status, sort by newest first
+        return b.created_at - a.created_at;
+      });
 
       setAllBookings(bookings);
 
