@@ -1094,6 +1094,49 @@ def admin_clean_db():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# Demo data for seed-demo endpoint (same as seed_demo_tasks.py)
+_DEMO_DENTIST_RESULTS = [
+    {"provider_id": "demo_dentist_1", "provider_name": "Cambridge Dental Associates", "phone": "+1 (617) 555-0101",
+     "address": "1 Massachusetts Ave, Cambridge, MA 02139", "rating": 4.8, "distance": 0.5, "travel_time": 8,
+     "availability_date": "Wednesday, February 12", "availability_time": "10:30 AM", "score": 92,
+     "call_status": "completed", "has_availability": True},
+    {"provider_id": "demo_dentist_2", "provider_name": "Harvard Square Dental", "phone": "+1 (617) 555-0102",
+     "address": "730 Massachusetts Ave, Cambridge, MA 02139", "rating": 4.5, "distance": 1.2, "travel_time": 12,
+     "availability_date": "Thursday, February 13", "availability_time": "2:00 PM", "score": 85,
+     "call_status": "completed", "has_availability": True},
+]
+_DEMO_VET_RESULTS = [
+    {"provider_id": "demo_vet_1", "provider_name": "Cambridge Veterinary Clinic", "phone": "+1 (617) 555-0201",
+     "address": "874 Massachusetts Ave, Cambridge, MA 02139", "rating": 4.9, "distance": 0.8, "travel_time": 10,
+     "availability_date": "Tuesday, February 11", "availability_time": "9:00 AM", "score": 95,
+     "call_status": "completed", "has_availability": True},
+    {"provider_id": "demo_vet_2", "provider_name": "Harvard Square Animal Hospital", "phone": "+1 (617) 555-0202",
+     "address": "2067 Massachusetts Ave, Cambridge, MA 02140", "rating": 4.6, "distance": 1.5, "travel_time": 14,
+     "availability_date": "No availability", "availability_time": "-", "score": 0,
+     "call_status": "completed", "has_availability": False},
+]
+
+
+@app.route('/api/admin/seed-demo', methods=['POST'])
+def admin_seed_demo():
+    """Create two demo tasks (dentist + veterinarian) for video/demo. Idempotent: adds 2 new bookings."""
+    try:
+        db.init_db()
+        dentist_id = str(uuid.uuid4())
+        db.create_booking(dentist_id, "dentist", "Cambridge, MA", "this week", {"preferred_slots": "Tuesday or Wednesday morning"})
+        db.update_booking_status(dentist_id, "completed", _DEMO_DENTIST_RESULTS)
+        vet_id = str(uuid.uuid4())
+        db.create_booking(vet_id, "veterinarian", "Cambridge, MA", "this week", {})
+        db.update_booking_status(vet_id, "completed", _DEMO_VET_RESULTS)
+        return jsonify({
+            'ok': True,
+            'message': 'Demo tasks seeded',
+            'booking_ids': [dentist_id, vet_id],
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # Text-to-Speech endpoint using ElevenLabs
 @app.route('/api/tts', methods=['POST'])
 def text_to_speech():
