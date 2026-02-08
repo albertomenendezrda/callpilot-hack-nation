@@ -68,11 +68,13 @@ export default function TasksPage() {
 
       setAllBookings(bookings);
 
-      // Auto-expand processing bookings
+      // Auto-expand processing bookings (preserve manually expanded tasks)
       const processing = bookings.filter((b: Booking) => b.status === 'processing');
-      const newExpanded = new Set(expandedTasks);
-      processing.forEach((b: Booking) => newExpanded.add(b.booking_id));
-      setExpandedTasks(newExpanded);
+      setExpandedTasks((prevExpanded) => {
+        const newExpanded = new Set(prevExpanded);
+        processing.forEach((b: Booking) => newExpanded.add(b.booking_id));
+        return newExpanded;
+      });
 
       setLoading(false);
     } catch (error) {
