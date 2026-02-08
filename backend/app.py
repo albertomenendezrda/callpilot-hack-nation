@@ -141,7 +141,7 @@ def get_mock_cambridge_providers(service_type):
     return providers
 
 
-def make_real_calls(service_type, location, timeframe, booking_id=None):
+def make_real_calls(service_type, location, timeframe, booking_id=None, preferences=None):
     """Make real calls to providers using mock Cambridge data + Twilio"""
     try:
         print(f"🚀 REAL CALLING MODE: Finding providers and making calls...")
@@ -191,11 +191,21 @@ def make_real_calls(service_type, location, timeframe, booking_id=None):
 
         # 4. Make calls to each provider (all to test number when USE_TEST_NUMBER=true)
         results = []
+        prefs = preferences or {}
+        preferred_slots = prefs.get("preferred_slots") or ""
+        if not preferred_slots and timeframe:
+            try:
+                from availability import get_simulated_availability, format_slots_for_agent
+                slots = get_simulated_availability(timeframe)
+                preferred_slots = format_slots_for_agent(slots)
+            except Exception:
+                pass
         booking_context = {
             'service_type': service_type,
             'timeframe': timeframe,
             'location': location,
             'client_name': 'Alberto Menendez',
+            'preferred_slots': preferred_slots,
         }
 
         to_number = providers[0]['phone']  # test number when using mock providers
@@ -335,8 +345,8 @@ Be professional and concise."""
 
                 print(f"   ❌ Call failed: {call_info.get('error')}")
 
-        # Sort by score
-        results.sort(key=lambda x: x.get('score', 0), reverse=True)
+        # Don't sort by score - keep chronological order (order calls were made)
+        # results.sort(key=lambda x: x.get('score', 0), reverse=True)
 
         print(f"\n✅ Completed {len(results)} calls successfully")
         return results
@@ -461,8 +471,8 @@ def generate_mock_results(service_type, location, booking_id=None):
                 })
             db.update_booking_results(booking_id, current_results)
 
-    # Sort by score (highest first)
-    results.sort(key=lambda x: x['score'], reverse=True)
+    # Don't sort by score - keep chronological order (order calls were made)
+    # results.sort(key=lambda x: x['score'], reverse=True)
 
     return results
 
@@ -653,7 +663,7 @@ def create_booking_request():
         def run_calls():
             try:
                 if use_real_calls:
-                    results = make_real_calls(service_type, location, timeframe, booking_id)
+                    results = make_real_calls(service_type, location, timeframe, booking_id, preferences)
                 else:
                     results = generate_mock_results(service_type, location, booking_id)
                 db.update_booking_status(booking_id, 'completed', results)

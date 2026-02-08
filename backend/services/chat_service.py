@@ -1,12 +1,21 @@
 """
 GenAI-powered chat for appointment booking.
 Uses Gemini or OpenAI to extract service_type, location, timeframe from natural conversation.
-Goal: fulfill the task without needing to ask back; else mark requires_user_attention.
+When we have timeframe, we simulate "checking the user's calendar" and set preferred_slots so the outbound agent can close in one call.
 """
 import os
 import json
 import re
 from typing import Dict, List, Optional, Any
+
+try:
+    from availability import get_simulated_availability, format_slots_for_agent
+except ImportError:
+    import sys
+    _backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _backend not in sys.path:
+        sys.path.insert(0, _backend)
+    from availability import get_simulated_availability, format_slots_for_agent
 
 # Required fields for a booking task
 REQUIRED_FIELDS = ["service_type", "location", "timeframe"]
@@ -35,7 +44,9 @@ Rules:
 
 At the end of your reply, output a single line in this exact format (no other text on this line):
 CALLPILOT_JSON: {"service_type": "...", "location": "...", "timeframe": "...", "status": "gathering_info"|"ready_to_call"|"requires_user_attention"}
-Use status "gathering_info" while still missing any required field; "ready_to_call" when all three are present and you've asked to proceed; "requires_user_attention" when you can't get what's needed."""
+Use status "gathering_info" while still missing any required field; "ready_to_call" when all three are present and you've asked to proceed; "requires_user_attention" when you can't get what's needed.
+
+When you have service_type, location, and timeframe, say that we've checked their calendar and will use their availability when calling providers (the system will attach concrete time windows). Then ask to call."""
 
 
 def _parse_model_json(reply: str) -> Optional[Dict]:
@@ -116,9 +127,15 @@ def chat_with_gemini(messages: List[Dict], extracted_so_far: Dict) -> tuple[str,
         for k, v in new_extracted.items():
             if v:
                 extracted_so_far[k] = v
+        # Simulate calendar: when we have timeframe, set preferred_slots so the outbound agent can close in one call
+        if extracted_so_far.get("timeframe"):
+            slots = get_simulated_availability(extracted_so_far["timeframe"])
+            extracted_so_far["preferred_slots"] = format_slots_for_agent(slots)
         if status == "ready_to_call" and not all(extracted_so_far.get(f) for f in REQUIRED_FIELDS):
             status = "gathering_info"
         clean_reply = re.sub(r"\n?CALLPILOT_JSON:.*$", "", reply, flags=re.MULTILINE | re.DOTALL).strip()
+        if status == "ready_to_call" and extracted_so_far.get("preferred_slots"):
+            clean_reply += f" I've checked your calendar for {extracted_so_far.get('timeframe', 'that period')} — you're free {extracted_so_far['preferred_slots']}. I'll ask providers for these times."
         return clean_reply or "Got it.", extracted_so_far, status
 
     return reply, extracted_so_far, "gathering_info"
@@ -171,9 +188,14 @@ def chat_with_openai(messages: List[Dict], extracted_so_far: Dict) -> tuple[str,
         for k, v in new_extracted.items():
             if v:
                 extracted_so_far[k] = v
+        if extracted_so_far.get("timeframe"):
+            slots = get_simulated_availability(extracted_so_far["timeframe"])
+            extracted_so_far["preferred_slots"] = format_slots_for_agent(slots)
         if status == "ready_to_call" and not all(extracted_so_far.get(f) for f in REQUIRED_FIELDS):
             status = "gathering_info"
         clean_reply = re.sub(r"\n?CALLPILOT_JSON:.*$", "", reply, flags=re.MULTILINE | re.DOTALL).strip()
+        if status == "ready_to_call" and extracted_so_far.get("preferred_slots"):
+            clean_reply += f" I've checked your calendar for {extracted_so_far.get('timeframe', 'that period')} — you're free {extracted_so_far['preferred_slots']}. I'll ask providers for these times."
         return clean_reply or "Got it.", extracted_so_far, status
 
     return reply, extracted_so_far, "gathering_info"

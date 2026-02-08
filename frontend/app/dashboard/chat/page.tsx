@@ -12,7 +12,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isFormatted?: boolean;
-  formattedData?: { service?: string; location?: string; timeframe?: string };
+  formattedData?: { service?: string; location?: string; timeframe?: string; preferred_slots?: string };
 }
 
 type TaskStatus = 'gathering_info' | 'ready_to_call' | 'requires_user_attention';
@@ -21,6 +21,7 @@ interface BookingData {
   service_type?: string;
   location?: string;
   timeframe?: string;
+  preferred_slots?: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -99,7 +100,7 @@ export default function ChatPage() {
 
       const ext = data.extracted_data || {};
       const formatted = (data.task_status === 'ready_to_call' && (ext.service_type || ext.location || ext.timeframe))
-        ? { service: ext.service_type?.replace('_', ' '), location: ext.location, timeframe: ext.timeframe?.replace('_', ' ') }
+        ? { service: ext.service_type?.replace('_', ' '), location: ext.location, timeframe: ext.timeframe?.replace('_', ' '), preferred_slots: ext.preferred_slots }
         : undefined;
       addMessage('assistant', data.reply || 'Got it.', formatted);
     } catch (_) {
@@ -119,7 +120,12 @@ export default function ChatPage() {
         service_type,
         timeframe,
         location,
-        preferences: { availability_weight: 0.4, rating_weight: 0.3, distance_weight: 0.3 }
+        preferences: {
+          availability_weight: 0.4,
+          rating_weight: 0.3,
+          distance_weight: 0.3,
+          ...(bookingData.preferred_slots && { preferred_slots: bookingData.preferred_slots }),
+        },
       };
       await apiClient.createBookingRequest(request);
       addMessage('assistant', "Booking created. I’m calling providers now. You can watch progress on the Tasks page.");
@@ -215,10 +221,16 @@ export default function ChatPage() {
                         <span className="font-medium min-w-[80px]">Location:</span>
                         <span>{message.formattedData.location}</span>
                       </div>
-                      <div className="flex items-start">
+                        <div className="flex items-start">
                         <span className="font-medium min-w-[80px]">Timeframe:</span>
                         <span className="capitalize">{message.formattedData.timeframe}</span>
                       </div>
+                      {message.formattedData.preferred_slots && (
+                        <div className="flex items-start">
+                          <span className="font-medium min-w-[80px]">Availability:</span>
+                          <span>{message.formattedData.preferred_slots}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

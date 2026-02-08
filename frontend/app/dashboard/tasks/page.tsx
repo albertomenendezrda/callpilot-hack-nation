@@ -327,19 +327,10 @@ export default function TasksPage() {
                               {task.results.filter((r: Result) => r.availability_date).slice(0, 5).map((result: any, idx: number) => (
                                 <div
                                   key={idx}
-                                  className={`p-4 rounded-lg border-2 ${
-                                    idx === 0
-                                      ? 'border-green-500 bg-green-50'
-                                      : 'border-black/10 bg-white'
-                                  }`}
+                                  className="p-4 rounded-lg border-2 border-black/10 bg-white"
                                 >
                                   <div className="flex items-start justify-between mb-2">
                                     <div className="flex items-center space-x-2">
-                                      {idx === 0 && (
-                                        <span className="px-2 py-0.5 bg-green-600 text-white text-xs font-semibold rounded">
-                                          BEST MATCH
-                                        </span>
-                                      )}
                                       <h4 className="font-semibold text-base">
                                         {result.provider_name}
                                       </h4>
@@ -366,15 +357,6 @@ export default function TasksPage() {
                                       <span className="text-black/70">{result.phone}</span>
                                     </div>
                                   </div>
-
-                                  {idx === 0 && (
-                                    <Button
-                                      size="sm"
-                                      className="w-full mt-3 bg-green-600 hover:bg-green-700 text-white"
-                                    >
-                                      Confirm Booking
-                                    </Button>
-                                  )}
                                 </div>
                               ))}
                             </div>

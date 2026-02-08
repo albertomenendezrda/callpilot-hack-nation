@@ -13,6 +13,8 @@ export interface BookingRequest {
     rating_weight?: number;
     distance_weight?: number;
     availability_weight?: number;
+    /** Concrete availability windows (e.g. from calendar) so the agent can close in one call */
+    preferred_slots?: string;
   };
 }
 

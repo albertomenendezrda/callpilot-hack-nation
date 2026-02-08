@@ -7,11 +7,14 @@ def get_first_message(
     service_type: str = "appointment",
     timeframe: str = "this week",
     client_name: str = "Alberto Menendez",
+    preferred_slots: str = "",
 ) -> str:
-    """First thing the agent says. Brief, professional; states purpose and timeframe."""
+    """First thing the agent says. Uses concrete availability when provided so we can close in one call."""
     st = (service_type or "appointment").replace("_", " ")
-    tf = (timeframe or "this week").replace("_", " ")
     name = client_name or "Alberto Menendez"
+    if preferred_slots and preferred_slots.strip():
+        return f"Hi — I'm calling on behalf of {name} to book a {st} appointment. He's available {preferred_slots}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
+    tf = (timeframe or "this week").replace("_", " ")
     return f"Hi — I'm calling on behalf of {name} to book a {st} appointment. He's looking for something {tf}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
 
 
@@ -39,7 +42,7 @@ Your primary goal is to obtain the earliest available appointment that fits the 
 
 1.  Initial Contact: Greet the business politely and professionally. State the purpose of the call clearly and briefly
 
-2.  Availability Inquiry: Ask about availability within the specified timeframe {{appointment_timeframe}}.
+2.  Availability Inquiry: The client's preferred availability is {{preferred_slots}}. Ask if the provider has anything in those windows. If not specified, use timeframe {{appointment_timeframe}}.
 
 •   If the requested timeframe is unavailable:
   - Ask for the nearest earlier or later availability.
@@ -233,6 +236,7 @@ def get_agent_prompt(
     timeframe: str = "this week",
     system_time_utc: str = "",
     system_called_number: str = "",
+    preferred_slots: str = "",
 ) -> str:
     """
     Generate complete agent prompt for a specific service type.
@@ -253,6 +257,8 @@ def get_agent_prompt(
     full_prompt = BASE_AGENT_PROMPT + "\n\n" + vertical_prompt
 
     full_prompt = full_prompt.replace("{{client_name}}", client_name or "the client")
+    slots_text = (preferred_slots or "").strip() or (timeframe or "the client's preferred timeframe")
+    full_prompt = full_prompt.replace("{{preferred_slots}}", slots_text)
     full_prompt = full_prompt.replace("{{appointment_timeframe}}", timeframe or "the client's preferred timeframe")
     full_prompt = full_prompt.replace(
         "{{system_time_utc}}",
