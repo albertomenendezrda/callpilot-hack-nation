@@ -44,9 +44,9 @@ export default function LandingPage() {
                   Dashboard
                 </span>
               </Link>
-              <Link href="/dashboard/voice">
+              <Link href="/dashboard/chat">
                 <Button size="sm" className="bg-black text-white hover:bg-black/90">
-                  Try Voice AI
+                  Try AI Chat
                 </Button>
               </Link>
             </div>
@@ -72,9 +72,9 @@ export default function LandingPage() {
               and books the earliest available slot that matches your calendar.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-              <Link href="/dashboard/voice">
+              <Link href="/dashboard/chat">
                 <Button size="lg" className="text-lg px-10 py-6 bg-black text-white hover:bg-black/90">
-                  Try Voice AI Free
+                  Try AI Chat
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
               </Link>

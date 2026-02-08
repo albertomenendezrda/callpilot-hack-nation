@@ -15,6 +15,10 @@ export interface BookingRequest {
     availability_weight?: number;
     /** Concrete availability windows (e.g. from calendar) so the agent can close in one call */
     preferred_slots?: string;
+    /** User-stated time (e.g. "6 PM") so calendar slots match */
+    preferred_time?: string;
+    /** For restaurant: party size (e.g. "6") */
+    party_size?: string;
   };
 }
 
