@@ -1,5 +1,7 @@
 # CallPilot - Autonomous Voice AI Appointment Scheduling
 
+![CallPilot Hero](docs/images/hero-image.png)
+
 CallPilot is an AI-powered appointment booking service that autonomously calls service providers, negotiates appointment slots, and finds you the earliest available appointment that matches your preferences.
 
 ## Architecture
