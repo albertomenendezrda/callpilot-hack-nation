@@ -12,7 +12,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isFormatted?: boolean;
-  formattedData?: { service?: string; location?: string; timeframe?: string; preferred_slots?: string };
+  formattedData?: { service?: string; location?: string; timeframe?: string; preferred_slots?: string; preferred_time?: string; party_size?: string };
 }
 
 type TaskStatus = 'gathering_info' | 'ready_to_call' | 'requires_user_attention';
@@ -22,6 +22,8 @@ interface BookingData {
   location?: string;
   timeframe?: string;
   preferred_slots?: string;
+  preferred_time?: string;
+  party_size?: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -100,7 +102,7 @@ export default function ChatPage() {
 
       const ext = data.extracted_data || {};
       const formatted = (data.task_status === 'ready_to_call' && (ext.service_type || ext.location || ext.timeframe))
-        ? { service: ext.service_type?.replace('_', ' '), location: ext.location, timeframe: ext.timeframe?.replace('_', ' '), preferred_slots: ext.preferred_slots }
+        ? { service: ext.service_type?.replace('_', ' '), location: ext.location, timeframe: ext.timeframe?.replace('_', ' '), preferred_slots: ext.preferred_slots, preferred_time: ext.preferred_time, party_size: ext.party_size }
         : undefined;
       addMessage('assistant', data.reply || 'Got it.', formatted);
     } catch (_) {
@@ -125,6 +127,8 @@ export default function ChatPage() {
           rating_weight: 0.3,
           distance_weight: 0.3,
           ...(bookingData.preferred_slots && { preferred_slots: bookingData.preferred_slots }),
+          ...(bookingData.preferred_time && { preferred_time: bookingData.preferred_time }),
+          ...(bookingData.party_size && { party_size: bookingData.party_size }),
         },
       };
       await apiClient.createBookingRequest(request);
@@ -229,6 +233,18 @@ export default function ChatPage() {
                         <div className="flex items-start">
                           <span className="font-medium min-w-[80px]">Availability:</span>
                           <span>{message.formattedData.preferred_slots}</span>
+                        </div>
+                      )}
+                      {message.formattedData.preferred_time && (
+                        <div className="flex items-start">
+                          <span className="font-medium min-w-[80px]">Preferred time:</span>
+                          <span>{message.formattedData.preferred_time}</span>
+                        </div>
+                      )}
+                      {message.formattedData.party_size && (
+                        <div className="flex items-start">
+                          <span className="font-medium min-w-[80px]">Party size:</span>
+                          <span>{message.formattedData.party_size} people</span>
                         </div>
                       )}
                     </div>

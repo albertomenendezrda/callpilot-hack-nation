@@ -36,7 +36,7 @@ interface Result {
   phone: string;
   address: string;
   rating: number;
-  call_status: 'pending' | 'calling' | 'completed' | 'failed';
+  call_status: 'pending' | 'calling' | 'in_progress' | 'completed' | 'failed';
   distance?: number;
   travel_time?: number;
   availability_date?: string;
@@ -49,36 +49,46 @@ export default function TasksPage() {
   const [allBookings, setAllBookings] = useState<Booking[]>([]);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const fetchAllBookings = async () => {
     try {
+      setFetchError(null);
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
       const res = await fetch(`${apiUrl}/api/dashboard/bookings`);
+
+      const contentType = res.headers.get('content-type');
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      if (!contentType?.includes('application/json')) {
+        throw new Error('Server did not return JSON');
+      }
+
       const data = await res.json();
 
       // Sort: processing first, then completed, newest first within each group
       const bookings = (data.bookings || []).sort((a: Booking, b: Booking) => {
-        // First, prioritize processing tasks
         if (a.status === 'processing' && b.status !== 'processing') return -1;
         if (a.status !== 'processing' && b.status === 'processing') return 1;
-
-        // Within same status, sort by newest first
         return b.created_at - a.created_at;
       });
 
       setAllBookings(bookings);
 
-      // Auto-expand processing bookings (preserve manually expanded tasks)
-      const processing = bookings.filter((b: Booking) => b.status === 'processing');
-      setExpandedTasks((prevExpanded) => {
-        const newExpanded = new Set(prevExpanded);
-        processing.forEach((b: Booking) => newExpanded.add(b.booking_id));
-        return newExpanded;
-      });
+      if (!hasAutoExpanded) {
+        const processing = bookings.filter((b: Booking) => b.status === 'processing');
+        setExpandedTasks(new Set(processing.map((b: Booking) => b.booking_id)));
+        setHasAutoExpanded(true);
+      }
 
       setLoading(false);
     } catch (error) {
       console.error('Error fetching bookings:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to fetch');
+      setAllBookings([]);
       setLoading(false);
     }
   };
@@ -164,7 +174,20 @@ export default function TasksPage() {
       {/* Main Content: scrollable */}
       <div className="flex-1 min-h-0 overflow-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {allBookings.length === 0 ? (
+        {fetchError && (
+          <div className="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+            <p className="font-medium">Couldn’t load tasks</p>
+            <p className="text-sm mt-1 text-amber-800">{fetchError}</p>
+            <p className="text-sm mt-2 text-amber-700">
+              Check that <code className="bg-amber-100 px-1 rounded">{process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}</code> is reachable and CORS allows this origin.
+            </p>
+            <Button onClick={fetchAllBookings} variant="outline" size="sm" className="mt-3 border-amber-300 text-amber-900 hover:bg-amber-100">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+          </div>
+        )}
+        {allBookings.length === 0 && !fetchError ? (
           <div className="text-center py-12">
             <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-black/20" />
             <h3 className="text-lg font-semibold text-black mb-2">
@@ -173,11 +196,15 @@ export default function TasksPage() {
             <p className="text-black/60 mb-6">
               Start by creating your first booking request
             </p>
-            <Link href="/dashboard/voice">
+            <Link href="/dashboard/chat">
               <Button className="bg-black text-white hover:bg-black/90">
                 Create New Booking
               </Button>
             </Link>
+          </div>
+        ) : allBookings.length === 0 && fetchError ? (
+          <div className="text-center py-12 text-black/60">
+            <p>Fix the connection and click Retry above, or go to <Link href="/dashboard/chat" className="text-black underline">AI Chat</Link> to create a booking.</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -185,6 +212,7 @@ export default function TasksPage() {
               const isExpanded = expandedTasks.has(task.booking_id);
               const progress = task.results || [];
               const completedCalls = progress.filter((p: Result) => p.call_status === 'completed').length;
+              const inProgressCalls = progress.filter((p: Result) => p.call_status === 'in_progress').length;
               const totalCalls = progress.length;
 
               return (
@@ -248,7 +276,8 @@ export default function TasksPage() {
                               Live Calling Progress
                             </h3>
                             <div className="text-sm text-black/60">
-                              {completedCalls}/{totalCalls} calls completed
+                              {completedCalls}/{totalCalls} completed
+                              {inProgressCalls > 0 && ` · ${inProgressCalls} in progress`}
                             </div>
                           </div>
 
@@ -282,6 +311,8 @@ export default function TasksPage() {
                                     <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
                                   ) : call.call_status === 'calling' ? (
                                     <Loader2 className="h-5 w-5 animate-spin text-blue-600 flex-shrink-0" />
+                                  ) : call.call_status === 'in_progress' ? (
+                                    <Phone className="h-5 w-5 text-amber-600 flex-shrink-0" />
                                   ) : call.call_status === 'failed' ? (
                                     <div className="h-5 w-5 rounded-full border-2 border-red-500 flex-shrink-0" />
                                   ) : (
@@ -306,6 +337,7 @@ export default function TasksPage() {
                                   <div className="text-xs text-black/50">
                                     {call.call_status === 'completed' && '✓ Done'}
                                     {call.call_status === 'calling' && 'Calling...'}
+                                    {call.call_status === 'in_progress' && 'In progress'}
                                     {call.call_status === 'pending' && 'Pending'}
                                     {call.call_status === 'failed' && '✗ Failed'}
                                   </div>
@@ -324,9 +356,9 @@ export default function TasksPage() {
                             Booking Results
                           </h3>
 
-                          {task.results && task.results.filter((r: Result) => r.availability_date).length > 0 ? (
+                          {task.results && task.results.filter((r: Result) => r.call_status === 'completed' && r.availability_date && r.availability_date !== '—').length > 0 ? (
                             <div className="space-y-3">
-                              {task.results.filter((r: Result) => r.availability_date).slice(0, 5).map((result: any, idx: number) => (
+                              {task.results.filter((r: Result) => r.call_status === 'completed' && r.availability_date && r.availability_date !== '—').slice(0, 5).map((result: any, idx: number) => (
                                 <div
                                   key={idx}
                                   className="p-4 rounded-lg border-2 border-black/10 bg-white"
@@ -364,7 +396,11 @@ export default function TasksPage() {
                             </div>
                           ) : (
                             <div className="text-center py-8 text-black/50">
-                              <p>No providers had availability for this request</p>
+                              {task.results?.some((r: Result) => r.call_status === 'in_progress') ? (
+                                <p>Calls in progress — availability will appear here when calls finish.</p>
+                              ) : (
+                                <p>No providers had availability for this request</p>
+                              )}
                             </div>
                           )}
                         </div>

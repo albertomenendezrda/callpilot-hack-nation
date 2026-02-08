@@ -10,7 +10,6 @@ import {
   Settings,
   Zap,
   Home,
-  Mic,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -30,12 +29,6 @@ export default function DashboardLayout({
       href: '/dashboard',
       icon: LayoutDashboard,
       current: pathname === '/dashboard',
-    },
-    {
-      name: 'Voice AI',
-      href: '/dashboard/voice',
-      icon: Mic,
-      current: pathname === '/dashboard/voice',
     },
     {
       name: 'AI Chat',
