@@ -1,16 +1,20 @@
 #!/bin/bash
 
 # CallPilot Full Deployment Script
-# Deploys both backend (Cloud Run) and frontend (Firebase)
+# Deploys infrastructure and applications
 
 set -e
+
+# Get the repository root directory (parent of scripts directory)
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "🚀 CallPilot Full Stack Deployment"
 echo "===================================="
 echo ""
 echo "This will deploy:"
+echo "  - Infrastructure (Terraform)"
 echo "  - Backend to Google Cloud Run"
-echo "  - Frontend to Firebase Hosting"
+echo "  - Frontend to Google Cloud Run"
 echo ""
 
 # ============================================
@@ -20,17 +24,17 @@ echo ""
 echo "🔍 Checking prerequisites..."
 echo ""
 
+# Check if terraform is installed
+if ! command -v terraform &> /dev/null; then
+    echo "❌ Terraform is not installed. Please install it from:"
+    echo "https://www.terraform.io/downloads"
+    exit 1
+fi
+
 # Check if gcloud is installed
 if ! command -v gcloud &> /dev/null; then
     echo "❌ gcloud CLI is not installed. Please install it from:"
     echo "https://cloud.google.com/sdk/docs/install"
-    exit 1
-fi
-
-# Check if firebase CLI is installed
-if ! command -v firebase &> /dev/null; then
-    echo "❌ Firebase CLI is not installed."
-    echo "Install it with: npm install -g firebase-tools"
     exit 1
 fi
 
@@ -59,16 +63,69 @@ fi
 echo ""
 
 # ============================================
+# Infrastructure Deployment
+# ============================================
+
+echo "================================================"
+echo "🏗️  STEP 1/3: Deploying Infrastructure (Terraform)"
+echo "================================================"
+echo ""
+
+# Navigate to terraform directory
+cd "$REPO_ROOT/terraform"
+
+echo "🔧 Initializing Terraform..."
+echo ""
+
+# Initialize Terraform (safe to run multiple times)
+terraform init
+
+echo ""
+echo "📋 Planning infrastructure changes..."
+echo ""
+
+# Run terraform plan
+terraform plan -out=tfplan
+
+echo ""
+read -p "🚦 Apply these infrastructure changes? (y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Infrastructure deployment cancelled"
+    rm -f tfplan
+    exit 0
+fi
+
+echo ""
+echo "🔨 Applying infrastructure changes..."
+echo ""
+
+# Apply the plan
+if terraform apply tfplan; then
+    echo ""
+    echo "✅ Infrastructure deployed successfully!"
+    echo ""
+    rm -f tfplan
+else
+    echo ""
+    echo "❌ Infrastructure deployment failed!"
+    rm -f tfplan
+    exit 1
+fi
+
+echo ""
+
+# ============================================
 # Backend Deployment
 # ============================================
 
 echo "================================================"
-echo "📡 STEP 1/2: Deploying Backend to Cloud Run"
+echo "📡 STEP 2/3: Deploying Backend to Cloud Run"
 echo "================================================"
 echo ""
 
 # Navigate to backend directory
-cd "$(dirname "$0")/../backend"
+cd "$REPO_ROOT/backend"
 
 echo "🔨 Building and deploying backend..."
 echo ""
@@ -89,7 +146,7 @@ if gcloud builds submit --config cloudbuild.yaml; then
         echo ""
 
         # Update frontend .env.local with backend URL
-        cd "$(dirname "$0")/../frontend"
+        cd "$REPO_ROOT/frontend"
 
         if [ -f ".env.local" ]; then
             # Backup existing .env.local
@@ -122,42 +179,38 @@ echo ""
 # ============================================
 
 echo "================================================"
-echo "🎨 STEP 2/2: Deploying Frontend to Firebase"
+echo "🎨 STEP 3/3: Deploying Frontend to Cloud Run"
 echo "================================================"
 echo ""
 
 # Navigate to frontend directory
-cd "$(dirname "$0")/../frontend"
+cd "$REPO_ROOT/frontend"
 
-# Check if .env.local exists
-if [ ! -f ".env.local" ]; then
-    echo "❌ .env.local file not found. Please create it with:"
-    echo "NEXT_PUBLIC_API_URL=https://your-backend-url"
-    exit 1
+# Update cloudbuild.yaml with backend URL if available
+if [ -n "$BACKEND_URL" ]; then
+    echo "📝 Updating frontend Cloud Build config with backend URL..."
+    sed -i.bak "s|NEXT_PUBLIC_API_URL=.*'|NEXT_PUBLIC_API_URL=$BACKEND_URL'|g" cloudbuild.yaml
+    rm cloudbuild.yaml.bak
 fi
 
-echo "📦 Building frontend..."
+echo "🔨 Building and deploying frontend..."
 echo ""
 
-# Build the application
-if npm run build; then
-    echo ""
-    echo "✅ Frontend built successfully!"
-    echo ""
-else
-    echo ""
-    echo "❌ Frontend build failed!"
-    exit 1
-fi
-
-echo "🚀 Deploying to Firebase..."
-echo ""
-
-# Deploy to Firebase
-if firebase deploy --only hosting; then
+# Submit build to Cloud Build
+if gcloud builds submit --config cloudbuild.yaml; then
     echo ""
     echo "✅ Frontend deployed successfully!"
     echo ""
+
+    # Get frontend service URL
+    FRONTEND_URL=$(gcloud run services describe callpilot-frontend \
+        --region us-central1 \
+        --format 'value(status.url)' 2>/dev/null || echo "")
+
+    if [ -n "$FRONTEND_URL" ]; then
+        echo "🌐 Frontend URL: $FRONTEND_URL"
+        echo ""
+    fi
 else
     echo ""
     echo "❌ Frontend deployment failed!"
@@ -173,16 +226,25 @@ echo "================================================"
 echo "🎉 DEPLOYMENT COMPLETE!"
 echo "================================================"
 echo ""
+echo "✅ Infrastructure deployed (Terraform)"
+echo "   - Secret Manager secrets configured"
+echo "   - IAM permissions configured"
+echo "   - Cloud Run services configured"
+echo ""
 echo "✅ Backend deployed to Cloud Run"
 if [ -n "$BACKEND_URL" ]; then
     echo "   URL: $BACKEND_URL"
     echo "   Test: curl $BACKEND_URL/health"
 fi
 echo ""
-echo "✅ Frontend deployed to Firebase Hosting"
+echo "✅ Frontend deployed to Cloud Run"
+if [ -n "$FRONTEND_URL" ]; then
+    echo "   URL: $FRONTEND_URL"
+fi
 echo ""
 echo "🔗 Next steps:"
-echo "   1. Test your application"
-echo "   2. Monitor logs in GCP Console and Firebase Console"
-echo "   3. Configure any environment-specific settings"
+echo "   1. Test your application at $FRONTEND_URL"
+echo "   2. Monitor logs in GCP Console"
+echo "   3. Verify secrets in Secret Manager"
+echo "   4. Check Cloud Run service configurations"
 echo ""
