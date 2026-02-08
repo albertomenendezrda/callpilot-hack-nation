@@ -1,0 +1,39 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=https://callpilot-backend-pxib5typta-uc.a.run.app'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
+      - '.'
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'callpilot-frontend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'NEXT_PUBLIC_API_URL=https://callpilot-backend-pxib5typta-uc.a.run.app'
+
+images:
+  - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
