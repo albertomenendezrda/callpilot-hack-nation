@@ -40,12 +40,20 @@ CallPilot Orchestrator (Backend)
 
 ### Backend
 - **Flask** - Python web framework
+- **SQLite** - Database for task/booking persistence
 - **ElevenLabs Conversational AI** - Voice agents
 - **Twilio** - Phone infrastructure
 - **Google APIs**:
   - Calendar API (availability checking)
   - Places API (provider search)
   - Maps API (distance calculation)
+
+### Deployment & Infrastructure
+- **Google Cloud Run** - Serverless container hosting
+- **Google Cloud Build** - CI/CD pipeline
+- **Docker** - Containerization
+- **Terraform** - Infrastructure as Code
+- **Secret Manager** - Secure credential storage
 
 ## Features
 
@@ -100,14 +108,31 @@ The backend will be available at http://localhost:8080
 ## Environment Variables
 
 ### Backend (.env)
-```
+```bash
+# Flask Configuration
+SECRET_KEY=your-secret-key-here
+
+# ElevenLabs API
 ELEVENLABS_API_KEY=your-key
+ELEVENLABS_AGENT_ID=your-agent-id
+ELEVENLABS_AGENT_PHONE_NUMBER_ID=your-phone-number-id
+
+# Google APIs
 GOOGLE_CALENDAR_API_KEY=your-key
 GOOGLE_PLACES_API_KEY=your-key
 GOOGLE_MAPS_API_KEY=your-key
+
+# Twilio Configuration
 TWILIO_ACCOUNT_SID=your-sid
 TWILIO_AUTH_TOKEN=your-token
 TWILIO_PHONE_NUMBER=your-number
+```
+
+### Frontend (.env.local)
+```bash
+# Backend API URL
+NEXT_PUBLIC_API_URL=http://localhost:8080  # Local development
+# NEXT_PUBLIC_API_URL=https://your-backend-url  # Production
 ```
 
 ## Project Structure
@@ -116,24 +141,46 @@ TWILIO_PHONE_NUMBER=your-number
 callpilot/
 ├── frontend/
 │   ├── app/
-│   │   ├── page.tsx          # Landing page
-│   │   ├── layout.tsx        # Root layout
-│   │   └── globals.css       # Global styles (B&W theme)
-│   ├── components/
-│   │   └── ui/               # Reusable UI components
-│   └── lib/
-│       └── utils.ts          # Utility functions
+│   │   ├── page.tsx                    # Landing page
+│   │   ├── book/page.tsx               # Booking form
+│   │   ├── dashboard/                  # Dashboard pages
+│   │   │   ├── tasks/page.tsx          # Task tracking
+│   │   │   ├── chat/page.tsx           # AI chat interface
+│   │   │   └── layout.tsx              # Dashboard layout
+│   │   └── booking/[id]/               # Dynamic booking routes
+│   │       ├── page.tsx                # Booking results
+│   │       ├── progress/page.tsx       # Call progress
+│   │       └── success/page.tsx        # Booking confirmation
+│   ├── components/ui/                  # Reusable UI components
+│   ├── lib/                            # Utilities and API client
+│   ├── Dockerfile                      # Frontend container config
+│   └── cloudbuild.yaml                 # Cloud Build config
 │
 ├── backend/
-│   ├── app.py                # Flask application
+│   ├── app.py                          # Flask application
+│   ├── database.py                     # SQLite database layer
 │   ├── services/
-│   │   ├── elevenlabs_service.py   # Voice AI integration
-│   │   ├── google_service.py       # Google APIs
-│   │   └── ranking_engine.py       # Option ranking
-│   ├── models/               # Data models
-│   └── api/                  # API endpoints
+│   │   ├── elevenlabs_service.py       # Voice AI integration
+│   │   ├── chat_service.py             # AI chat assistant
+│   │   ├── google_service.py           # Google APIs
+│   │   └── twilio_service.py           # Twilio integration
+│   ├── agent_prompts.py                # AI agent instructions
+│   ├── availability.py                 # Availability checking
+│   ├── seed_demo_tasks.py              # Demo data generator
+│   └── cloudbuild.yaml                 # Cloud Build config
 │
-└── README.md
+├── terraform/                          # Infrastructure as Code
+│   ├── main.tf                         # Main Terraform config
+│   ├── variables.tf                    # Variable definitions
+│   └── terraform.tfvars                # Variable values
+│
+├── scripts/
+│   ├── deploy-all.sh                   # Full stack deployment
+│   ├── deploy-frontend.sh              # Frontend only deployment
+│   └── deploy-backend.sh               # Backend only deployment
+│
+└── docs/
+    └── ELEVENLABS-TWILIO-SETUP.md      # Setup instructions
 ```
 
 ## How It Works
@@ -148,26 +195,36 @@ callpilot/
 
 ## API Endpoints
 
-### POST `/api/booking/request`
-Create a new booking request
+### Booking Management
+- **POST** `/api/booking/request` - Create a new booking request
+- **GET** `/api/booking/{booking_id}` - Get booking status and results
+- **POST** `/api/booking/{booking_id}/confirm` - Confirm selected provider
+- **GET** `/api/bookings` - Get all bookings for dashboard
+
+### Chat Interface
+- **POST** `/api/task` - Create a new chat task/conversation
+- **POST** `/api/chat` - Send message to AI chat assistant
+- **GET** `/api/task/{task_id}` - Get task status
+
+### Admin & Demo
+- **POST** `/api/admin/seed-demo` - Seed demo bookings for testing
+- **POST** `/api/admin/clean-db` - Clean database (development only)
+
+### Example: Create Booking Request
 ```json
+POST /api/booking/request
 {
   "service_type": "dentist",
-  "timeframe": "this week",
-  "location": "San Francisco, CA",
+  "timeframe": "this_week",
+  "location": "Cambridge, MA",
   "preferences": {
+    "availability_weight": 0.4,
     "rating_weight": 0.3,
     "distance_weight": 0.3,
-    "availability_weight": 0.4
+    "preferred_slots": "Tuesday or Wednesday morning"
   }
 }
 ```
-
-### GET `/api/booking/{booking_id}`
-Get status of booking request
-
-### POST `/api/booking/{booking_id}/confirm`
-Confirm selected booking option
 
 ## Development Roadmap
 
