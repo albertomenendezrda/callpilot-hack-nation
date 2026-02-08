@@ -80,6 +80,9 @@ class ElevenLabsService:
         location = booking_context.get('location', '')
         client_name = booking_context.get('client_name', 'Alberto Menendez')
         preferred_slots = (booking_context.get('preferred_slots') or '').strip()
+        party_size = (booking_context.get('party_size') or '').strip()
+        business_name = (booking_context.get('business_name') or '').strip() or provider_name
+        business_type = (booking_context.get('business_type') or '').strip() or service_type
 
         system_time_utc = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
         full_prompt = get_agent_prompt(
@@ -89,6 +92,9 @@ class ElevenLabsService:
             system_time_utc=system_time_utc,
             system_called_number=to_number,
             preferred_slots=preferred_slots,
+            party_size=party_size,
+            business_name=business_name,
+            business_type=business_type,
         )
 
         first_message = get_first_message(
@@ -96,6 +102,9 @@ class ElevenLabsService:
             timeframe=timeframe,
             client_name=client_name,
             preferred_slots=preferred_slots,
+            party_size=party_size,
+            business_name=business_name,
+            business_type=business_type,
         )
         # Prepend first-message instruction to prompt (avoids needing "First message" override enabled on agent)
         prompt_with_opening = f'''# First message (say this when the call is answered)
@@ -105,7 +114,7 @@ Then continue the conversation according to the rules below.
 ---
 {full_prompt}'''
 
-        # Dynamic variables: the agent prompt uses {{client_name}}, {{system_time_utc}}, {{system_called_number}}, {{appointment_timeframe}}, {{preferred_slots}}.
+        # Dynamic variables: the agent prompt uses {{client_name}}, {{system_time_utc}}, {{system_called_number}}, {{appointment_timeframe}}, {{preferred_slots}}, {{party_size}}, {{business_name}}, {{business_type}}.
         slots_value = preferred_slots or timeframe or "the client's preferred timeframe"
         dynamic_variables = {
             "client_name": client_name,
@@ -113,6 +122,9 @@ Then continue the conversation according to the rules below.
             "system_called_number": to_number,
             "appointment_timeframe": timeframe or "the client's preferred timeframe",
             "preferred_slots": slots_value,
+            "party_size": party_size or "",
+            "business_name": business_name or "",
+            "business_type": business_type or "",
         }
         # Use a direct HTTP request with a body that contains ONLY the prompt override (no first_message key).
         url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"

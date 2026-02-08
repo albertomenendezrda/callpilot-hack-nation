@@ -32,6 +32,8 @@ You must extract and maintain:
 - service_type: one of dentist, doctor, hair_salon, barber, auto_mechanic, plumber, electrician, massage, veterinarian, restaurant (normalize: "dental" -> dentist, "medical" -> doctor, "hair cut" -> hair_salon, "dinner" -> restaurant, etc.)
 - location: city/area or full address (e.g. "Cambridge, MA", "Boston", "123 Main St Boston")
 - timeframe: when they need it (e.g. "today", "tomorrow", "this week", "next week", "asap")
+- preferred_time: if the user gives a specific time, extract it (e.g. "6 PM", "noon", "7:30 PM", "evening"). This is used for their calendar so we show the right availability.
+- party_size: for restaurant only, number of people (e.g. 6 for "party of 6" or "6 people").
 
 Rules:
 1. Be conversational and warm. Don't ask robotic step-by-step questions; infer from context when possible.
@@ -43,10 +45,10 @@ Rules:
 7. Reply in 1-3 short sentences. Be helpful and human.
 
 At the end of your reply, output a single line in this exact format (no other text on this line):
-CALLPILOT_JSON: {"service_type": "...", "location": "...", "timeframe": "...", "status": "gathering_info"|"ready_to_call"|"requires_user_attention"}
-Use status "gathering_info" while still missing any required field; "ready_to_call" when all three are present and you've asked to proceed; "requires_user_attention" when you can't get what's needed.
+CALLPILOT_JSON: {"service_type": "...", "location": "...", "timeframe": "...", "preferred_time": "..." or "", "party_size": "..." or "", "status": "gathering_info"|"ready_to_call"|"requires_user_attention"}
+Include preferred_time when the user says a specific time (e.g. "tomorrow at 6 PM" -> timeframe "tomorrow", preferred_time "6 PM"). Include party_size for restaurant (e.g. "6 people" -> "6"). Use status "gathering_info" while still missing any required field; "ready_to_call" when all three (service_type, location, timeframe) are present and you've asked to proceed; "requires_user_attention" when you can't get what's needed.
 
-When you have service_type, location, and timeframe, say that we've checked their calendar and will use their availability when calling providers (the system will attach concrete time windows). Then ask to call."""
+When you have service_type, location, and timeframe, say that we've checked their calendar and will use their availability when calling providers (the system will attach concrete time windows that match their requested time if they gave one). Then ask to call."""
 
 
 def _parse_model_json(reply: str) -> Optional[Dict]:
@@ -76,6 +78,15 @@ def _normalize_extracted(data: Dict) -> Dict:
     if tf:
         tf_map = {"today": "today", "tomorrow": "tomorrow", "asap": "today", "soon": "this week", "this week": "this week", "next week": "next week", "this month": "this month", "this_week": "this week", "next_week": "next week"}
         out["timeframe"] = tf_map.get(tf.replace(" ", "_"), tf_map.get(tf, tf))
+    pt = (data.get("preferred_time") or "").strip()
+    if pt:
+        out["preferred_time"] = pt
+    ps = data.get("party_size")
+    if ps is not None:
+        if isinstance(ps, str) and ps.isdigit():
+            out["party_size"] = ps
+        elif isinstance(ps, int):
+            out["party_size"] = str(ps)
     return out
 
 
@@ -127,9 +138,10 @@ def chat_with_gemini(messages: List[Dict], extracted_so_far: Dict) -> tuple[str,
         for k, v in new_extracted.items():
             if v:
                 extracted_so_far[k] = v
-        # Simulate calendar: when we have timeframe, set preferred_slots so the outbound agent can close in one call
+        # Simulate calendar: when we have timeframe, set preferred_slots (use user's stated time if they gave one)
         if extracted_so_far.get("timeframe"):
-            slots = get_simulated_availability(extracted_so_far["timeframe"])
+            preferred_time = extracted_so_far.get("preferred_time") or ""
+            slots = get_simulated_availability(extracted_so_far["timeframe"], preferred_time=preferred_time or None)
             extracted_so_far["preferred_slots"] = format_slots_for_agent(slots)
         if status == "ready_to_call" and not all(extracted_so_far.get(f) for f in REQUIRED_FIELDS):
             status = "gathering_info"
@@ -189,7 +201,8 @@ def chat_with_openai(messages: List[Dict], extracted_so_far: Dict) -> tuple[str,
             if v:
                 extracted_so_far[k] = v
         if extracted_so_far.get("timeframe"):
-            slots = get_simulated_availability(extracted_so_far["timeframe"])
+            preferred_time = extracted_so_far.get("preferred_time") or ""
+            slots = get_simulated_availability(extracted_so_far["timeframe"], preferred_time=preferred_time or None)
             extracted_so_far["preferred_slots"] = format_slots_for_agent(slots)
         if status == "ready_to_call" and not all(extracted_so_far.get(f) for f in REQUIRED_FIELDS):
             status = "gathering_info"

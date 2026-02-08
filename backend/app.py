@@ -5,6 +5,7 @@ import os
 import uuid
 import time
 import threading
+import json
 from datetime import datetime, timedelta
 import random
 import asyncio
@@ -127,14 +128,16 @@ def get_mock_cambridge_providers(service_type):
 
     names = provider_data.get(service_type, provider_data['doctor'])
     test_number = os.getenv('TEST_CALL_NUMBER', '+16173596803')
+    test_number_2 = os.getenv('TEST_CALL_NUMBER_2', '+16173884716')  # Second provider so both calls can connect
 
     providers = []
     for i, name in enumerate(names[:2]):  # Testing with 2 providers
+        phone = test_number_2 if i == 1 else test_number
         providers.append({
             'name': name,
             'address': cambridge_addresses[i],
             'rating': round(random.uniform(4.0, 5.0), 1),
-            'phone': test_number,  # All use the same test number
+            'phone': phone,
             'place_id': f'mock_place_{service_type}_{i}'
         })
 
@@ -196,7 +199,8 @@ def make_real_calls(service_type, location, timeframe, booking_id=None, preferen
         if not preferred_slots and timeframe:
             try:
                 from availability import get_simulated_availability, format_slots_for_agent
-                slots = get_simulated_availability(timeframe)
+                preferred_time = prefs.get("preferred_time") or ""
+                slots = get_simulated_availability(timeframe, preferred_time=preferred_time or None)
                 preferred_slots = format_slots_for_agent(slots)
             except Exception:
                 pass
@@ -206,14 +210,110 @@ def make_real_calls(service_type, location, timeframe, booking_id=None, preferen
             'location': location,
             'client_name': 'Alberto Menendez',
             'preferred_slots': preferred_slots,
+            'preferred_time': prefs.get('preferred_time') or '',
+            'party_size': prefs.get('party_size') or '',
         }
 
         to_number = providers[0]['phone']  # test number when using mock providers
         if use_elevenlabs_outbound:
-            print(f"\n🎯 Using ElevenLabs Conversational AI (multi-turn) to: {to_number}\n")
+            print(f"\n🎯 Using ElevenLabs Conversational AI — initiating all {len(providers)} calls in parallel\n")
         else:
             print(f"\n🎯 Making Twilio calls to test number: {to_number}\n")
 
+        # ElevenLabs: initiate all outbound calls in parallel so the second isn't blocked by the first
+        # (one Twilio number can block a second call if we wait for the first to "connect")
+        if use_elevenlabs_outbound and len(providers) > 1:
+            call_results_lock = threading.Lock()
+            call_results_by_index = {}  # index -> call_info
+
+            def initiate_one(i_provider):
+                i, provider = i_provider
+                to_num = provider['phone']
+                ctx = {
+                    **booking_context,
+                    'business_name': provider.get('name', ''),
+                    'business_type': provider.get('business_type') or service_type,
+                }
+                try:
+                    info = elevenlabs_service.make_elevenlabs_outbound_call(
+                        to_number=to_num,
+                        provider_name=provider.get('name', ''),
+                        booking_context=ctx,
+                    )
+                    with call_results_lock:
+                        call_results_by_index[i] = info
+                except Exception as e:
+                    with call_results_lock:
+                        call_results_by_index[i] = {'status': 'failed', 'error': str(e)}
+
+            threads = [threading.Thread(target=initiate_one, args=((i, p),)) for i, p in enumerate(providers)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # Build results in provider order — always one result per provider so the UI shows both
+            for i, provider in enumerate(providers):
+                call_info = call_results_by_index.get(i, {'status': 'failed', 'error': 'No response'})
+                dist_data = distance_data.get(provider['address'], {})
+                distance_miles = dist_data.get('distance_miles', 1.5)
+                travel_minutes = dist_data.get('duration_minutes', 10)
+                base = {
+                    'provider_id': provider.get('place_id', str(uuid.uuid4())),
+                    'provider_name': provider['name'],
+                    'phone': provider['phone'],
+                    'address': provider['address'],
+                    'rating': provider['rating'],
+                    'distance': distance_miles,
+                    'travel_time': travel_minutes,
+                }
+                if call_info.get('status') not in ('failed', None):
+                    result = {
+                        **base,
+                        'availability_date': '—',
+                        'availability_time': '—',
+                        'score': 0,
+                        'call_sid': call_info.get('call_sid'),
+                        'conversation_id': call_info.get('conversation_id'),
+                        'call_status': 'in_progress',
+                        'has_availability': None,
+                    }
+                    results.append(result)
+                    print(f"   📞 [{i+1}] {provider['name']} — initiated (conversation_id: {call_info.get('conversation_id')})")
+                else:
+                    results.append({
+                        **base,
+                        'availability_date': '—',
+                        'availability_time': '—',
+                        'score': 0,
+                        'call_status': 'failed',
+                    })
+                    print(f"   ❌ [{i+1}] {provider['name']} — failed: {call_info.get('error', 'unknown')}")
+            # Guarantee we have exactly len(providers) results (in case a thread didn't store)
+            while len(results) < len(providers):
+                i = len(results)
+                p = providers[i]
+                dist_data = distance_data.get(p['address'], {})
+                results.append({
+                    'provider_id': p.get('place_id', str(uuid.uuid4())),
+                    'provider_name': p['name'],
+                    'phone': p['phone'],
+                    'address': p['address'],
+                    'rating': p['rating'],
+                    'distance': dist_data.get('distance_miles', 1.5),
+                    'travel_time': dist_data.get('duration_minutes', 10),
+                    'availability_date': '—',
+                    'availability_time': '—',
+                    'score': 0,
+                    'call_status': 'failed',
+                })
+                print(f"   ❌ [{i+1}] {p['name']} — no response (missing from parallel call)")
+            if booking_id:
+                db.update_booking_results(booking_id, results)
+            print(f"\n✅ Initiated {len(results)} calls")
+            return results
+
+        # Sequential path (Twilio fallback or single provider)
         for i, provider in enumerate(providers, 1):
             print(f"📞 [{i}/{len(providers)}] Processing {provider['name']}...")
 
@@ -241,10 +341,15 @@ def make_real_calls(service_type, location, timeframe, booking_id=None, preferen
 
             if use_elevenlabs_outbound:
                 print(f"🎯 Making ElevenLabs call to: {to_number}")
+                context_with_business = {
+                    **booking_context,
+                    'business_name': provider.get('name', ''),
+                    'business_type': provider.get('business_type') or service_type,
+                }
                 call_info = elevenlabs_service.make_elevenlabs_outbound_call(
                     to_number=provider['phone'],
                     provider_name=provider.get('name', ''),
-                    booking_context=booking_context,
+                    booking_context=context_with_business,
                 )
             else:
                 print(f"🎯 Making Twilio call to test number: {to_number}")
@@ -259,47 +364,66 @@ Be professional and concise."""
                 )
 
             if call_info.get('status') not in ('failed', None):
-                # Calculate score based on distance and rating
                 dist_data = distance_data.get(provider['address'], {})
                 distance_miles = dist_data.get('distance_miles', 1.5)
                 travel_minutes = dist_data.get('duration_minutes', 10)
 
-                # Score calculation: prioritize closer providers with good ratings
-                distance_score = max(0, 50 - (distance_miles * 3))
-                rating_score = provider['rating'] * 10
-                base_score = distance_score + rating_score
+                # ElevenLabs returns 'initiated' when the call is placed; the call runs async.
+                # Do NOT mark as completed until we have real outcome (e.g. webhook). Use 'in_progress'.
+                call_placed_not_ended = use_elevenlabs_outbound and call_info.get('status') == 'initiated'
 
-                # Simulate availability (in production would parse call transcript)
-                has_availability = random.random() < 0.7
-
-                if has_availability:
-                    days_out = random.randint(1, 10)
-                    availability_date = (datetime.now() + timedelta(days=days_out)).strftime('%A, %B %d')
-                    availability_time = random.choice(['9:00 AM', '10:30 AM', '2:00 PM', '3:30 PM', '4:00 PM'])
-
-                    # Earlier appointments boost score
-                    time_bonus = max(0, 30 - (days_out * 2))
-                    final_score = min(98, base_score + time_bonus)
+                if call_placed_not_ended:
+                    # Call in progress — outcome will come from webhook (conversation_id used to match)
+                    result = {
+                        'provider_id': provider.get('place_id', str(uuid.uuid4())),
+                        'provider_name': provider['name'],
+                        'phone': provider['phone'],
+                        'address': provider['address'],
+                        'rating': provider['rating'],
+                        'distance': distance_miles,
+                        'travel_time': travel_minutes,
+                        'availability_date': '—',
+                        'availability_time': '—',
+                        'score': 0,
+                        'call_sid': call_info.get('call_sid'),
+                        'conversation_id': call_info.get('conversation_id'),
+                        'call_status': 'in_progress',
+                        'has_availability': None,
+                    }
+                    print(f"   📞 Call initiated (in progress) — conversation_id: {call_info.get('conversation_id')}")
                 else:
-                    availability_date = "No availability"
-                    availability_time = "-"
-                    final_score = 0
+                    # Twilio or sync outcome: treat as completed with score/availability
+                    distance_score = max(0, 50 - (distance_miles * 3))
+                    rating_score = provider['rating'] * 10
+                    base_score = distance_score + rating_score
+                    has_availability = random.random() < 0.7
+                    if has_availability:
+                        days_out = random.randint(1, 10)
+                        availability_date = (datetime.now() + timedelta(days=days_out)).strftime('%A, %B %d')
+                        availability_time = random.choice(['9:00 AM', '10:30 AM', '2:00 PM', '3:30 PM', '4:00 PM'])
+                        time_bonus = max(0, 30 - (days_out * 2))
+                        final_score = min(98, base_score + time_bonus)
+                    else:
+                        availability_date = "No availability"
+                        availability_time = "-"
+                        final_score = 0
+                    result = {
+                        'provider_id': provider.get('place_id', str(uuid.uuid4())),
+                        'provider_name': provider['name'],
+                        'phone': provider['phone'],
+                        'address': provider['address'],
+                        'rating': provider['rating'],
+                        'distance': distance_miles,
+                        'travel_time': travel_minutes,
+                        'availability_date': availability_date,
+                        'availability_time': availability_time,
+                        'score': int(final_score),
+                        'call_sid': call_info.get('call_sid'),
+                        'call_status': 'completed',
+                        'has_availability': has_availability
+                    }
+                    print(f"   ✅ Call SID: {call_info.get('call_sid')} | Score: {final_score:.0f}")
 
-                result = {
-                    'provider_id': provider.get('place_id', str(uuid.uuid4())),
-                    'provider_name': provider['name'],
-                    'phone': provider['phone'],
-                    'address': provider['address'],
-                    'rating': provider['rating'],
-                    'distance': distance_miles,
-                    'travel_time': travel_minutes,
-                    'availability_date': availability_date,
-                    'availability_time': availability_time,
-                    'score': int(final_score),
-                    'call_sid': call_info.get('call_sid'),
-                    'call_status': 'completed',
-                    'has_availability': has_availability
-                }
                 results.append(result)
 
                 # Update results progressively
@@ -315,9 +439,6 @@ Be professional and concise."""
                             'call_status': 'pending'
                         })
                     db.update_booking_results(booking_id, current_results)
-
-                print(f"   ✅ Call SID: {call_info.get('call_sid') or call_info.get('conversation_id')}")
-                print(f"   📊 Score: {final_score:.0f} | Distance: {distance_miles:.1f}mi | Rating: {provider['rating']}⭐")
             else:
                 result = {
                     'provider_id': provider.get('place_id', str(uuid.uuid4())),
@@ -666,8 +787,17 @@ def create_booking_request():
                     results = make_real_calls(service_type, location, timeframe, booking_id, preferences)
                 else:
                     results = generate_mock_results(service_type, location, booking_id)
-                db.update_booking_status(booking_id, 'completed', results)
-                print(f"✅ Booking {booking_id} completed with {len(results)} results")
+                # Don't mark booking as 'completed' while any call is still in progress (e.g. ElevenLabs async calls).
+                # Results are already saved progressively; only transition to completed when all are done or failed.
+                any_still_in_progress = any(
+                    (r.get('call_status') or '') in ('calling', 'in_progress', 'pending')
+                    for r in (results or [])
+                )
+                if not any_still_in_progress:
+                    db.update_booking_status(booking_id, 'completed', results)
+                    print(f"✅ Booking {booking_id} completed with {len(results)} results")
+                else:
+                    print(f"⏳ Booking {booking_id} still in progress ({len(results)} calls initiated)")
             except Exception as e:
                 print(f"❌ Background calls failed for {booking_id}: {str(e)}")
                 import traceback
@@ -686,6 +816,126 @@ def create_booking_request():
     except Exception as e:
         print(f"❌ Error creating booking: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+def _find_booking_by_conversation_id(conversation_id: str):
+    """Find a processing booking that has a result with this conversation_id. Returns (booking, result_index) or (None, -1)."""
+    if not conversation_id:
+        return None, -1
+    for booking in db.get_all_bookings():
+        if booking.get('status') != 'processing':
+            continue
+        results = booking.get('results') or []
+        for idx, r in enumerate(results):
+            if (r.get('conversation_id') or r.get('call_sid')) == conversation_id:
+                return booking, idx
+    return None, -1
+
+
+def _parse_availability_from_webhook_data(data: dict) -> tuple:
+    """Extract availability_date and availability_time from ElevenLabs post_call_transcription data if possible."""
+    analysis = data.get('analysis') or {}
+    transcript = data.get('transcript') or []
+    summary = (analysis.get('transcript_summary') or '').strip()
+    call_successful = analysis.get('call_successful') or ''
+    # Data collection might have structured slots
+    data_collection = analysis.get('data_collection_results') or {}
+    if isinstance(data_collection, dict):
+        date_str = data_collection.get('availability_date') or data_collection.get('earliest_date')
+        time_str = data_collection.get('availability_time') or data_collection.get('earliest_time')
+        if date_str or time_str:
+            return (date_str or '—', time_str or '—')
+    # Fallback: use summary or mark as completed without specific slot
+    if call_successful == 'success' and summary:
+        return ('Call completed', summary[:80] + ('...' if len(summary) > 80 else ''))
+    return ('Call completed', '—')
+
+
+@app.route('/api/webhooks/elevenlabs', methods=['POST'])
+@app.route('/api/webhook/elevenlabs', methods=['POST'])  # alias (common typo)
+def elevenlabs_webhook():
+    """
+    ElevenLabs post-call webhook: called when a conversation ends or call initiation fails.
+    Configure in ElevenLabs Agents settings. Use ngrok: run backend on port 8080, then `ngrok http 8080`
+    and set webhook URL to https://YOUR_NGROK_URL/api/webhooks/elevenlabs.
+    Set ELEVENLABS_WEBHOOK_SECRET in .env to verify the ElevenLabs-Signature header.
+    """
+    raw_body = request.get_data(as_text=False)
+    try:
+        payload = json.loads(raw_body.decode('utf-8')) if raw_body else None
+    except Exception:
+        payload = None
+    if not payload or not isinstance(payload, dict):
+        return jsonify({'error': 'Invalid JSON'}), 400
+
+    # Optional HMAC verification. Set ELEVENLABS_WEBHOOK_SECRET to the same value as in ElevenLabs dashboard.
+    # For local/testing with ngrok, leave ELEVENLABS_WEBHOOK_SECRET empty to skip verification (no 401).
+    webhook_secret = os.getenv('ELEVENLABS_WEBHOOK_SECRET', '').strip()
+    skip_verify = os.getenv('ELEVENLABS_WEBHOOK_SKIP_VERIFY', '').lower() in ('1', 'true', 'yes')
+    if webhook_secret and not skip_verify:
+        import hmac as hmac_lib
+        import hashlib
+        sig_header = (request.headers.get('ElevenLabs-Signature') or request.headers.get('elevenlabs-signature') or '').strip()
+        expected = hmac_lib.new(webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        sig_value = sig_header.replace('sha256=', '').strip() if sig_header.startswith('sha256=') else sig_header
+        if not sig_header or not hmac_lib.compare_digest(sig_value, expected):
+            print('⚠️  ElevenLabs webhook signature mismatch — set ELEVENLABS_WEBHOOK_SECRET to empty or ELEVENLABS_WEBHOOK_SKIP_VERIFY=true to accept webhooks without verification')
+            return jsonify({'error': 'Invalid signature'}), 401
+
+    event_type = payload.get('type') or ''
+    data = payload.get('data') or {}
+    conversation_id = (data.get('conversation_id') or '').strip()
+    if not conversation_id:
+        return jsonify({'status': 'received'}), 200
+
+    booking, idx = _find_booking_by_conversation_id(conversation_id)
+    if not booking or idx < 0:
+        print(f"⚠️  ElevenLabs webhook: no processing booking found for conversation_id={conversation_id}")
+        return jsonify({'status': 'received'}), 200
+
+    results = list(booking.get('results') or [])
+    if idx >= len(results):
+        return jsonify({'status': 'received'}), 200
+
+    if event_type == 'call_initiation_failure':
+        results[idx] = {**results[idx], 'call_status': 'failed'}
+        db.update_booking_results(booking['booking_id'], results)
+        print(f"📞 Call failed (initiation) for conversation_id={conversation_id}")
+    elif event_type == 'post_call_transcription':
+        availability_date, availability_time = _parse_availability_from_webhook_data(data)
+        metadata = data.get('metadata') or {}
+        call_duration = metadata.get('call_duration_secs') or 0
+        analysis = data.get('analysis') or {}
+        successful = (analysis.get('call_successful') or '') == 'success'
+        results[idx] = {
+            **results[idx],
+            'call_status': 'completed',
+            'availability_date': availability_date,
+            'availability_time': availability_time,
+            'has_availability': successful,
+            'score': min(95, 50 + (20 if successful else 0) + min(25, call_duration // 10)),
+        }
+        db.update_booking_results(booking['booking_id'], results)
+        print(f"✅ Call completed for conversation_id={conversation_id} (success={successful})")
+    else:
+        return jsonify({'status': 'received'}), 200
+
+    # Any result still in_progress will likely never get a webhook (e.g. second call to same number failed to connect).
+    # Mark them failed so the booking can complete.
+    for r in results:
+        if (r.get('call_status') or '') == 'in_progress':
+            r['call_status'] = 'failed'
+            r['availability_date'] = r.get('availability_date') or '—'
+            r['availability_time'] = r.get('availability_time') or 'No response'
+    db.update_booking_results(booking['booking_id'], results)
+
+    # Now all are completed or failed — mark booking as completed
+    if all((r.get('call_status') or '') in ('completed', 'failed') for r in results):
+        db.update_booking_status(booking['booking_id'], 'completed', results)
+        print(f"✅ Booking {booking['booking_id']} marked completed (all calls done)")
+
+    return jsonify({'status': 'received'}), 200
+
 
 # Get booking status endpoint
 @app.route('/api/booking/<booking_id>', methods=['GET'])
@@ -909,6 +1159,8 @@ if __name__ == '__main__':
     print(f"\n🔧 Configured APIs:")
     print(f"   - Twilio: {'✅' if os.getenv('TWILIO_ACCOUNT_SID') else '❌'}")
     print(f"   - ElevenLabs: {'✅' if os.getenv('ELEVENLABS_API_KEY') else '❌'}")
+    if os.getenv('ELEVENLABS_AGENT_ID'):
+        print(f"   - ElevenLabs webhook: POST /api/webhooks/elevenlabs (for ngrok use: ngrok http {port})")
 
     print(f"")
     app.run(host='0.0.0.0', port=port, debug=True)

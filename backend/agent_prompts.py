@@ -8,14 +8,19 @@ def get_first_message(
     timeframe: str = "this week",
     client_name: str = "Alberto Menendez",
     preferred_slots: str = "",
+    party_size: str = "",
+    business_name: str = "",
+    business_type: str = "",
 ) -> str:
     """First thing the agent says. Uses concrete availability when provided so we can close in one call."""
     st = (service_type or "appointment").replace("_", " ")
     name = client_name or "Alberto Menendez"
+    party = f" for {party_size} people" if (party_size and str(party_size).strip()) else ""
+    intro = f"Hi — I'm calling {business_name}. " if (business_name and business_name.strip()) else "Hi — "
     if preferred_slots and preferred_slots.strip():
-        return f"Hi — I'm calling on behalf of {name} to book a {st} appointment. He's available {preferred_slots}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
+        return f"{intro}I'm calling on behalf of {name} to book a {st}{party} appointment. He's available {preferred_slots}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
     tf = (timeframe or "this week").replace("_", " ")
-    return f"Hi — I'm calling on behalf of {name} to book a {st} appointment. He's looking for something {tf}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
+    return f"{intro}I'm calling on behalf of {name} to book a {st}{party} appointment. He's looking for something {tf}. Are you the right person to schedule that? I'd like to complete the booking on this call if possible."
 
 
 BASE_AGENT_PROMPT = """# Personality
@@ -24,7 +29,7 @@ You are {{client_name}}, an outbound AI voice assistant calling service provider
 
 # Environment
 
-You are calling service providers on behalf of a client to book an appointment. The current time is {{system_time_utc}}. You are calling from {{system_called_number}}.
+You are calling {{business_name}} (a {{business_type}}) on behalf of a client to book an appointment. The current time is {{system_time_utc}}. You are calling from {{system_called_number}}.
 
 # Tone
 
@@ -173,11 +178,11 @@ Ask about:
     'restaurant': """# Vertical: Restaurant
 
 ## Appointment Context
-You are booking a table reservation.
+You are booking a table reservation. Party size when provided: {{party_size}} (use this when the client specified a number of people).
 
 ## Common Requirements
 Ask about:
-•   Party size.
+•   Party size (if not already provided: {{party_size}}).
 •   Seating preferences (indoor/outdoor, bar, patio).
 •   Time limits on tables.
 •   Special occasions (optional).
@@ -237,6 +242,9 @@ def get_agent_prompt(
     system_time_utc: str = "",
     system_called_number: str = "",
     preferred_slots: str = "",
+    party_size: str = "",
+    business_name: str = "",
+    business_type: str = "",
 ) -> str:
     """
     Generate complete agent prompt for a specific service type.
@@ -259,6 +267,9 @@ def get_agent_prompt(
     full_prompt = full_prompt.replace("{{client_name}}", client_name or "the client")
     slots_text = (preferred_slots or "").strip() or (timeframe or "the client's preferred timeframe")
     full_prompt = full_prompt.replace("{{preferred_slots}}", slots_text)
+    full_prompt = full_prompt.replace("{{party_size}}", (party_size or "").strip() or "not specified")
+    full_prompt = full_prompt.replace("{{business_name}}", (business_name or "").strip() or "the business")
+    full_prompt = full_prompt.replace("{{business_type}}", (business_type or "").strip().replace("_", " ") or "service provider")
     full_prompt = full_prompt.replace("{{appointment_timeframe}}", timeframe or "the client's preferred timeframe")
     full_prompt = full_prompt.replace(
         "{{system_time_utc}}",
