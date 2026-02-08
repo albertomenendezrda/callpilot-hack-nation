@@ -98,8 +98,15 @@ Then continue the conversation according to the rules below.
 ---
 {full_prompt}'''
 
+        # Dynamic variables: the agent prompt uses {{client_name}}, {{system_time_utc}}, {{system_called_number}}, {{appointment_timeframe}}.
+        # ElevenLabs requires these to be passed in conversation_initiation_client_data.dynamic_variables.
+        dynamic_variables = {
+            "client_name": client_name,
+            "system_time_utc": system_time_utc,
+            "system_called_number": to_number,
+            "appointment_timeframe": timeframe or "the client's preferred timeframe",
+        }
         # Use a direct HTTP request with a body that contains ONLY the prompt override (no first_message key).
-        # The SDK serializes all model fields and the API rejects "first_message" when the agent config disallows it.
         url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
         payload = {
             "agent_id": self.agent_id,
@@ -110,7 +117,8 @@ Then continue the conversation according to the rules below.
                     "agent": {
                         "prompt": {"prompt": prompt_with_opening},
                     }
-                }
+                },
+                "dynamic_variables": dynamic_variables,
             },
         }
         headers = {
@@ -123,11 +131,16 @@ Then continue the conversation according to the rules below.
             if not resp.ok:
                 err = resp.text
                 try:
-                    err = resp.json().get("detail", err)
+                    body = resp.json()
+                    msg = body.get("message") or body.get("detail") or err
+                    err = msg if isinstance(msg, str) else str(body)
                 except Exception:
                     pass
-                print(f"❌ ElevenLabs outbound call failed: {resp.status_code} {err}")
-                return {'status': 'failed', 'error': err}
+                if resp.status_code == 404 and "document_not_found" in str(err).lower():
+                    print("❌ ElevenLabs outbound call failed: Phone number or agent not found. Check ELEVENLABS_AGENT_PHONE_NUMBER_ID and ELEVENLABS_AGENT_ID in .env — get the current IDs from the ElevenLabs dashboard (Phone Numbers and Agents).")
+                else:
+                    print(f"❌ ElevenLabs outbound call failed: {resp.status_code} {err}")
+                return {'status': 'failed', 'error': err if isinstance(err, str) else str(err)}
             data = resp.json()
             call_sid = data.get("call_sid") or data.get("callSid")
             conversation_id = data.get("conversation_id")

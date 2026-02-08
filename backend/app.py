@@ -207,9 +207,17 @@ def make_real_calls(service_type, location, timeframe, booking_id=None):
         for i, provider in enumerate(providers, 1):
             print(f"📞 [{i}/{len(providers)}] Processing {provider['name']}...")
 
-            # Update status to 'calling' for this provider
+            # Update status to 'calling' for this provider (results so far + current as 'calling' + rest as 'pending')
             if booking_id:
                 current_results = list(results)
+                current_results.append({
+                    'provider_id': provider.get('place_id', str(uuid.uuid4())),
+                    'provider_name': provider['name'],
+                    'phone': provider['phone'],
+                    'address': provider['address'],
+                    'rating': provider['rating'],
+                    'call_status': 'calling'
+                })
                 for p in providers[i:]:
                     current_results.append({
                         'provider_id': p.get('place_id', str(uuid.uuid4())),
@@ -219,7 +227,6 @@ def make_real_calls(service_type, location, timeframe, booking_id=None):
                         'rating': p['rating'],
                         'call_status': 'pending'
                     })
-                current_results[i-1]['call_status'] = 'calling'
                 db.update_booking_results(booking_id, current_results)
 
             if use_elevenlabs_outbound:

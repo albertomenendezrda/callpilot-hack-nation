@@ -65,19 +65,19 @@ export default function DashboardLayout({
 
   return (
     <div className="h-screen bg-white flex overflow-hidden">
-      {/* Sidebar: fixed width when open, narrow strip when closed; top aligns with main */}
+      {/* Sidebar: fixed position, full height */}
       <aside
         className={`${
-          sidebarOpen ? 'w-64' : 'w-14'
-        } flex-shrink-0 border-r border-black/10 bg-white flex flex-col transition-[width] duration-200 ease-out overflow-hidden`}
+          sidebarOpen ? 'w-64' : 'w-16'
+        } fixed left-0 top-0 h-screen border-r border-black/10 bg-white flex flex-col transition-all duration-200 ease-out z-40`}
       >
         {/* Top row: same height as page headers (h-16) for alignment */}
-        <div className="flex-shrink-0 h-16 flex items-center border-b border-black/10">
-          <div className="flex items-center gap-2 w-full px-3">
+        <div className="flex-shrink-0 h-16 flex items-center justify-center border-b border-black/10">
+          <div className={`flex items-center gap-2 w-full ${sidebarOpen ? 'px-4' : 'px-2 justify-center'}`}>
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className="p-2 rounded-lg text-black/70 hover:bg-black/10 hover:text-black transition-colors"
+              className="p-2 rounded-lg text-black/70 hover:bg-black/10 hover:text-black transition-colors flex-shrink-0"
               aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
             >
               {sidebarOpen ? (
@@ -96,50 +96,49 @@ export default function DashboardLayout({
         </div>
 
         {/* Navigation */}
-        {sidebarOpen && (
-          <>
-            <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
-              {navigation.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    className={`
-                      flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors
-                      ${
-                        item.current
-                          ? 'bg-black text-white'
-                          : 'text-black/70 hover:bg-black/5 hover:text-black'
-                      }
-                    `}
-                  >
-                    <Icon className="h-5 w-5 mr-3 flex-shrink-0" />
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </nav>
-
-            {/* Bottom section */}
-            <div className="flex-shrink-0 p-4 border-t border-black/10">
-              <Link href="/">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full border-black/10"
-                >
-                  <Home className="h-4 w-4 mr-2" />
-                  Back to Home
-                </Button>
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
+          {navigation.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`
+                  flex items-center ${sidebarOpen ? 'px-3' : 'px-2 justify-center'} py-2 text-sm font-medium rounded-lg transition-colors
+                  ${
+                    item.current
+                      ? 'bg-black text-white'
+                      : 'text-black/70 hover:bg-black/5 hover:text-black'
+                  }
+                `}
+                title={!sidebarOpen ? item.name : undefined}
+              >
+                <Icon className={`h-5 w-5 ${sidebarOpen ? 'mr-3' : ''} flex-shrink-0`} />
+                {sidebarOpen && item.name}
               </Link>
-            </div>
-          </>
+            );
+          })}
+        </nav>
+
+        {/* Bottom section */}
+        {sidebarOpen && (
+          <div className="flex-shrink-0 p-4 border-t border-black/10">
+            <Link href="/">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full border-black/10"
+              >
+                <Home className="h-4 w-4 mr-2" />
+                Back to Home
+              </Button>
+            </Link>
+          </div>
         )}
       </aside>
 
-      {/* Main content: only this area scrolls */}
-      <main className="flex-1 min-h-0 flex flex-col overflow-auto">
+      {/* Main content: offset by sidebar width, only this area scrolls */}
+      <main className={`${sidebarOpen ? 'ml-64' : 'ml-16'} flex-1 h-screen flex flex-col overflow-hidden transition-all duration-200 ease-out`}>
         {children}
       </main>
     </div>

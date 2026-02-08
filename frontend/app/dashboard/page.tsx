@@ -97,7 +97,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-white overflow-hidden">
       {/* Header: same height as sidebar top (h-16) so they align */}
       <div className="flex-shrink-0 h-16 flex items-center border-b border-black/10 bg-white sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
