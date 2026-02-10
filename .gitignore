@@ -12,6 +12,14 @@ __pycache__/
 backend/.env
 frontend/.env.local
 
+# Environment variable backups (prevent accidental secret commits)
+*.env.backup
+*.env.bak
+*.env.old
+.env*.backup
+.env*.bak
+.env*.old
+
 # Database
 *.db
 *.sqlite
