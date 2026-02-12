@@ -22,8 +22,9 @@ from services.google_service import get_google_service
 from services.elevenlabs_service import get_elevenlabs_service
 from services.twilio_service import get_twilio_service
 
-# Import database
+# Import database and auth
 import database as db
+from auth_middleware import require_auth, get_user_id_from_request
 
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
@@ -603,6 +604,116 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'callpilot'}), 200
 
 
+# Debug: check if backend can verify JWTs (NEXTAUTH_SECRET set on this process)
+@app.route('/api/debug/auth-configured', methods=['GET'])
+def debug_auth_configured():
+    secret = os.getenv('NEXTAUTH_SECRET', '').strip()
+    return jsonify({'auth_configured': bool(secret)}), 200
+
+
+# --- Waitlist (dev / gated signup) ---
+
+def _send_waitlist_confirmation_email(to_email: str, name: str) -> bool:
+    """Send confirmation email via Resend. Returns True if sent."""
+    api_key = os.getenv('RESEND_API_KEY', '').strip()
+    from_email = os.getenv('WAITLIST_FROM_EMAIL', 'CallPilot <onboarding@resend.dev>').strip()
+    if not api_key:
+        return False
+    try:
+        import requests
+        r = requests.post(
+            'https://api.resend.com/emails',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={
+                'from': from_email,
+                'to': [to_email],
+                'subject': "You're on the CallPilot waitlist",
+                'html': f'''<p>Hi {name or 'there'},</p>
+<p>Thanks for signing up for the CallPilot waitlist. We'll notify you when your account is ready.</p>
+<p>— The CallPilot team</p>''',
+            },
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            return True
+        print(f"Resend error: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"Waitlist email error: {e}")
+    return False
+
+
+@app.route('/api/waitlist', methods=['POST'])
+def waitlist_signup():
+    """Public: add name and email to waitlist; send confirmation email if Resend configured."""
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip()
+        name = (data.get('name') or '').strip()
+        if not email or '@' not in email:
+            return jsonify({'error': 'Valid email required'}), 400
+        sent = _send_waitlist_confirmation_email(email, name)
+        row = db.add_to_waitlist(email, name, confirmation_sent=sent)
+        if sent:
+            db.set_confirmation_sent(email)
+        return jsonify({'ok': True, 'message': 'You\'re on the waitlist', 'email': row['email']}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _require_admin():
+    """Check X-Admin-Key or Authorization Bearer matches ADMIN_SECRET."""
+    admin_secret = os.getenv('ADMIN_SECRET', '').strip()
+    if not admin_secret:
+        return None, jsonify({'error': 'Admin not configured'}), 503
+    key = request.headers.get('X-Admin-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    if key != admin_secret:
+        return None, jsonify({'error': 'Forbidden'}), 403
+    return admin_secret, None
+
+
+@app.route('/api/admin/waitlist', methods=['GET'])
+def admin_list_waitlist():
+    """List waitlist signups. Requires ADMIN_SECRET in X-Admin-Key header."""
+    _, err = _require_admin()
+    if err:
+        return err
+    try:
+        rows = db.get_waitlist()
+        return jsonify({'waitlist': rows}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/allow-email', methods=['POST'])
+def admin_allow_email():
+    """Add an email to the allowed user pool. Requires ADMIN_SECRET in X-Admin-Key header."""
+    _, err = _require_admin()
+    if err:
+        return err
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip()
+        if not email or '@' not in email:
+            return jsonify({'error': 'Valid email required'}), 400
+        row = db.add_allowed_email(email)
+        return jsonify({'ok': True, 'message': f'{email} added to user pool', 'email': row['email']}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/allowed', methods=['GET'])
+def admin_list_allowed():
+    """List allowed emails. Requires ADMIN_SECRET in X-Admin-Key header."""
+    _, err = _require_admin()
+    if err:
+        return err
+    try:
+        rows = db.get_allowed_emails()
+        return jsonify({'allowed': rows}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def _twilio_voice_twiml(step, service_type, timeframe, provider_name, webhook_base_url, speech_result=None, client_name="Alberto Menendez"):
     """Build multi-turn TwiML: step 0 = greet + gather, step 1 = follow-up + gather, step 2 = thank + hangup."""
     from urllib.parse import urlencode
@@ -680,11 +791,12 @@ def twilio_voice_webhook():
 from services.chat_service import chat as chat_service_chat
 
 @app.route('/api/task', methods=['POST'])
-def create_task():
+@require_auth
+def create_task(user_id):
     """Create a new task (one conversation = one task)."""
     try:
         task_id = str(uuid.uuid4())
-        db.create_task(task_id)
+        db.create_task(task_id, user_id)
         return jsonify({'task_id': task_id, 'status': 'gathering_info'}), 200
     except Exception as e:
         print(f"❌ Error creating task: {str(e)}")
@@ -692,7 +804,8 @@ def create_task():
 
 
 @app.route('/api/chat', methods=['POST'])
-def chat():
+@require_auth
+def chat(user_id):
     """
     Send a message in a task conversation. Uses GenAI (Gemini or OpenAI) to reply
     and extract service_type, location, timeframe. Task status can be gathering_info,
@@ -707,7 +820,7 @@ def chat():
         if not message:
             return jsonify({'error': 'message required'}), 400
 
-        task = db.get_task(task_id)
+        task = db.get_task(task_id, user_id)
         if not task:
             return jsonify({'error': 'Task not found'}), 404
         if task['status'] not in ('gathering_info', 'requires_user_attention'):
@@ -723,7 +836,7 @@ def chat():
 
         # Append assistant reply
         conv.append({'role': 'assistant', 'content': reply})
-        db.update_task(task_id, status=status, extracted_data=extracted, conversation=conv)
+        db.update_task(task_id, status=status, extracted_data=extracted, conversation=conv, user_id=user_id)
 
         return jsonify({
             'reply': reply,
@@ -739,10 +852,11 @@ def chat():
 
 
 @app.route('/api/task/<task_id>', methods=['GET'])
-def get_task(task_id):
+@require_auth
+def get_task(user_id, task_id):
     """Get task by id."""
     try:
-        task = db.get_task(task_id)
+        task = db.get_task(task_id, user_id)
         if not task:
             return jsonify({'error': 'Task not found'}), 404
         return jsonify(task), 200
@@ -752,7 +866,8 @@ def get_task(task_id):
 
 # Booking request endpoint
 @app.route('/api/booking/request', methods=['POST'])
-def create_booking_request():
+@require_auth
+def create_booking_request(user_id):
     """
     Create a new booking request
     Expected payload:
@@ -773,8 +888,8 @@ def create_booking_request():
         # Generate unique booking ID
         booking_id = str(uuid.uuid4())
 
-        # Store booking in database
-        db.create_booking(booking_id, service_type, location, timeframe, preferences)
+        # Store booking in database (scoped to user)
+        db.create_booking(booking_id, service_type, location, timeframe, preferences, user_id)
 
         print(f"📞 Created booking {booking_id} for {service_type} in {location}")
 
@@ -818,18 +933,6 @@ def create_booking_request():
         return jsonify({'error': str(e)}), 500
 
 
-def _find_booking_by_conversation_id(conversation_id: str):
-    """Find a processing booking that has a result with this conversation_id. Returns (booking, result_index) or (None, -1)."""
-    if not conversation_id:
-        return None, -1
-    for booking in db.get_all_bookings():
-        if booking.get('status') != 'processing':
-            continue
-        results = booking.get('results') or []
-        for idx, r in enumerate(results):
-            if (r.get('conversation_id') or r.get('call_sid')) == conversation_id:
-                return booking, idx
-    return None, -1
 
 
 def _parse_availability_from_webhook_data(data: dict) -> tuple:
@@ -888,7 +991,7 @@ def elevenlabs_webhook():
     if not conversation_id:
         return jsonify({'status': 'received'}), 200
 
-    booking, idx = _find_booking_by_conversation_id(conversation_id)
+    booking, idx = db.get_booking_by_conversation_id(conversation_id)
     if not booking or idx < 0:
         print(f"⚠️  ElevenLabs webhook: no processing booking found for conversation_id={conversation_id}")
         return jsonify({'status': 'received'}), 200
@@ -939,10 +1042,11 @@ def elevenlabs_webhook():
 
 # Get booking status endpoint
 @app.route('/api/booking/<booking_id>', methods=['GET'])
-def get_booking_status(booking_id):
+@require_auth
+def get_booking_status(user_id, booking_id):
     """Get status of a booking request (calls are started in background at create time)"""
     try:
-        booking = db.get_booking(booking_id)
+        booking = db.get_booking(booking_id, user_id)
 
         if not booking:
             return jsonify({'error': 'Booking not found'}), 404
@@ -961,13 +1065,14 @@ def get_booking_status(booking_id):
 
 # Confirm booking endpoint
 @app.route('/api/booking/<booking_id>/confirm', methods=['POST'])
-def confirm_booking(booking_id):
+@require_auth
+def confirm_booking(user_id, booking_id):
     """Confirm a selected booking option"""
     try:
         data = request.json
         provider_id = data.get('provider_id')
 
-        booking = db.get_booking(booking_id)
+        booking = db.get_booking(booking_id, user_id)
 
         if not booking:
             return jsonify({'error': 'Booking not found'}), 404
@@ -1001,10 +1106,11 @@ def confirm_booking(booking_id):
 
 # Dashboard endpoint - get all bookings and stats
 @app.route('/api/dashboard/stats', methods=['GET'])
-def get_dashboard_stats():
+@require_auth
+def get_dashboard_stats(user_id):
     """Get dashboard statistics"""
     try:
-        bookings_list = db.get_all_bookings()
+        bookings_list = db.get_all_bookings(user_id)
         total_bookings = len(bookings_list)
         completed = sum(1 for b in bookings_list if b['status'] == 'completed')
         processing = sum(1 for b in bookings_list if b['status'] == 'processing')
@@ -1035,7 +1141,8 @@ def get_dashboard_stats():
 
 # Connections endpoint
 @app.route('/api/connections', methods=['GET'])
-def get_connections():
+@require_auth
+def get_connections(user_id):
     """Get status of all connections"""
     try:
         use_real_calls = os.getenv('USE_REAL_CALLS', 'false').lower() == 'true'
@@ -1075,10 +1182,11 @@ def get_connections():
 
 # Get all bookings for dashboard
 @app.route('/api/dashboard/bookings', methods=['GET'])
-def get_all_bookings():
+@require_auth
+def get_all_bookings_route(user_id):
     """Get all bookings for dashboard view"""
     try:
-        bookings_list = db.get_all_bookings()
+        bookings_list = db.get_all_bookings(user_id)
         return jsonify({'bookings': bookings_list}), 200
 
     except Exception as e:
@@ -1086,7 +1194,8 @@ def get_all_bookings():
 
 # Admin: clean database (bookings + tasks)
 @app.route('/api/admin/clean-db', methods=['POST'])
-def admin_clean_db():
+@require_auth
+def admin_clean_db(user_id):
     """Clear all bookings and tasks. Use for development/reset."""
     try:
         db.clean_db()
@@ -1119,15 +1228,16 @@ _DEMO_VET_RESULTS = [
 
 
 @app.route('/api/admin/seed-demo', methods=['POST'])
-def admin_seed_demo():
+@require_auth
+def admin_seed_demo(user_id):
     """Create two demo tasks (dentist + veterinarian) for video/demo. Idempotent: adds 2 new bookings."""
     try:
         db.init_db()
         dentist_id = str(uuid.uuid4())
-        db.create_booking(dentist_id, "dentist", "Cambridge, MA", "this week", {"preferred_slots": "Tuesday or Wednesday morning"})
+        db.create_booking(dentist_id, "dentist", "Cambridge, MA", "this week", {"preferred_slots": "Tuesday or Wednesday morning"}, user_id)
         db.update_booking_status(dentist_id, "completed", _DEMO_DENTIST_RESULTS)
         vet_id = str(uuid.uuid4())
-        db.create_booking(vet_id, "veterinarian", "Cambridge, MA", "this week", {})
+        db.create_booking(vet_id, "veterinarian", "Cambridge, MA", "this week", {}, user_id)
         db.update_booking_status(vet_id, "completed", _DEMO_VET_RESULTS)
         return jsonify({
             'ok': True,
@@ -1139,7 +1249,8 @@ def admin_seed_demo():
 
 # Text-to-Speech endpoint using ElevenLabs
 @app.route('/api/tts', methods=['POST'])
-def text_to_speech():
+@require_auth
+def text_to_speech(user_id):
     """Convert text to speech using ElevenLabs for natural voice"""
     try:
         data = request.json
