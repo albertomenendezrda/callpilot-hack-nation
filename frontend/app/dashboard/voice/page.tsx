@@ -79,39 +79,25 @@ export default function VoiceBookingPage() {
 
       setIsSpeaking(true);
 
-      // Try ElevenLabs TTS first
+      // Try ElevenLabs TTS first (via backend, with auth)
       try {
-        const response = await fetch('http://localhost:8080/api/tts', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text,
-            voice_id: 'EXAVITQu4vr4xnSDxMaL' // Sarah - warm, natural female voice
-          }),
-        });
+        const audioBlob = await apiClient.tts(text, 'EXAVITQu4vr4xnSDxMaL');
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
 
-        if (response.ok) {
-          // ElevenLabs TTS succeeded
-          const audioBlob = await response.blob();
-          const audioUrl = URL.createObjectURL(audioBlob);
-          const audio = new Audio(audioUrl);
+        audio.onended = () => {
+          setIsSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+        };
 
-          audio.onended = () => {
-            setIsSpeaking(false);
-            URL.revokeObjectURL(audioUrl);
-          };
+        audio.onerror = () => {
+          setIsSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+        };
 
-          audio.onerror = () => {
-            setIsSpeaking(false);
-            URL.revokeObjectURL(audioUrl);
-          };
-
-          audioRef.current = audio;
-          await audio.play();
-          return; // Success, exit early
-        }
+        audioRef.current = audio;
+        await audio.play();
+        return; // Success, exit early
       } catch (elevenLabsError) {
         console.log('ElevenLabs TTS not available, using browser TTS');
       }

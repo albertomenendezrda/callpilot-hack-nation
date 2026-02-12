@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard,
   Calendar,
@@ -12,6 +13,7 @@ import {
   Home,
   PanelLeftClose,
   PanelLeftOpen,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -115,7 +117,7 @@ export default function DashboardLayout({
 
         {/* Bottom section */}
         {sidebarOpen && (
-          <div className="flex-shrink-0 p-4 border-t border-black/10">
+          <div className="flex-shrink-0 p-4 border-t border-black/10 space-y-2">
             <Link href="/">
               <Button
                 variant="outline"
@@ -126,6 +128,15 @@ export default function DashboardLayout({
                 Back to Home
               </Button>
             </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full text-black/70 hover:text-black hover:bg-black/5"
+              onClick={() => signOut({ callbackUrl: '/' })}
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign out
+            </Button>
           </div>
         )}
       </aside>

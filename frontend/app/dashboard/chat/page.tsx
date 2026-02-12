@@ -26,8 +26,6 @@ interface BookingData {
   party_size?: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-
 export default function ChatPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([
@@ -58,8 +56,7 @@ export default function ChatPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_URL}/api/task`, { method: 'POST' });
-        const data = await res.json();
+        const data = await apiClient.createTask();
         if (!cancelled && data.task_id) setTaskId(data.task_id);
       } catch (_) {}
     })();
@@ -85,22 +82,12 @@ export default function ChatPage() {
     setIsProcessing(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: taskId, message: userMessage })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        addMessage('assistant', data.error || 'Something went wrong.');
-        setTaskStatus('requires_user_attention');
-        return;
-      }
+      const data = await apiClient.chat(taskId, userMessage);
 
       setBookingData(data.extracted_data || {});
-      setTaskStatus(data.task_status || 'gathering_info');
+      setTaskStatus((data.task_status || 'gathering_info') as TaskStatus);
 
-      const ext = data.extracted_data || {};
+      const ext = (data.extracted_data || {}) as BookingData;
       const formatted = (data.task_status === 'ready_to_call' && (ext.service_type || ext.location || ext.timeframe))
         ? { service: ext.service_type?.replace('_', ' '), location: ext.location, timeframe: ext.timeframe?.replace('_', ' '), preferred_slots: ext.preferred_slots, preferred_time: ext.preferred_time, party_size: ext.party_size }
         : undefined;

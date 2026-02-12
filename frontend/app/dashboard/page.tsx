@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +15,8 @@ import {
   PhoneCall
 } from 'lucide-react';
 import Link from 'next/link';
+import { signOut } from 'next-auth/react';
+import { apiClient, WaitlistError, UnauthorizedError } from '@/lib/api-client';
 
 interface DashboardStats {
   total_bookings: number;
@@ -37,25 +40,39 @@ export default function DashboardPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [unauthorized, setUnauthorized] = useState(false);
+  const [backendAuthConfigured, setBackendAuthConfigured] = useState<boolean | null>(null);
+  const retryCount = useRef(0);
+  const router = useRouter();
 
   const fetchDashboardData = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-
-      // Fetch stats
-      const statsRes = await fetch(`${apiUrl}/api/dashboard/stats`);
-      const statsData = await statsRes.json();
+      const [statsData, bookingsData] = await Promise.all([
+        apiClient.getDashboardStats(),
+        apiClient.getDashboardBookings(),
+      ]);
       setStats(statsData.stats);
-
-      // Fetch bookings
-      const bookingsRes = await fetch(`${apiUrl}/api/dashboard/bookings`);
-      const bookingsData = await bookingsRes.json();
-      setBookings(bookingsData.bookings || []);
-
+      setBookings((bookingsData.bookings || []) as unknown as Booking[]);
+      setUnauthorized(false);
+      retryCount.current = 0;
       setLastUpdate(new Date());
       setLoading(false);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      if (error instanceof WaitlistError) {
+        // Redirect waitlist users away — they shouldn't see the dashboard at all
+        await signOut({ redirect: false });
+        router.replace('/waitlist');
+        return;
+      } else if (error instanceof UnauthorizedError) {
+        // On first load the token may not be ready yet; retry once silently
+        if (retryCount.current < 2) {
+          retryCount.current++;
+          setTimeout(fetchDashboardData, 1000);
+          return;
+        }
+        setUnauthorized(true);
+      }
       setLoading(false);
     }
   };
@@ -85,12 +102,62 @@ export default function DashboardPage() {
     return new Date(timestamp * 1000).toLocaleString();
   };
 
-  if (loading) {
+  if (loading && !unauthorized) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
           <RefreshCw className="h-12 w-12 animate-spin mx-auto mb-4 text-black" />
           <p className="text-black/60">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const checkBackendAuth = async () => {
+    setBackendAuthConfigured(null);
+    const base = process.env.NEXT_PUBLIC_API_URL || '';
+    if (!base) return;
+    try {
+      const res = await fetch(`${base.replace(/\/$/, '')}/api/debug/auth-configured`);
+      const data = await res.json().catch(() => ({}));
+      setBackendAuthConfigured(Boolean((data as { auth_configured?: boolean }).auth_configured));
+    } catch {
+      setBackendAuthConfigured(false);
+    }
+  };
+
+  if (unauthorized) {
+    return (
+      <div className="h-full flex flex-col bg-white overflow-hidden">
+        <div className="flex-shrink-0 h-16 flex items-center border-b border-black/10 bg-white" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <Card className="border-2 border-amber-200 bg-amber-50">
+            <CardHeader>
+              <CardTitle>Session could not be verified</CardTitle>
+              <CardDescription>
+                The backend could not verify your sign-in. On the <strong>cloud deployment</strong>, the backend gets env from gcloud, not from <code className="bg-amber-100 px-1 rounded">backend/.env</code>. Run <code className="bg-amber-100 px-1 rounded">./scripts/set-backend-auth-secret.sh</code> to push <code className="bg-amber-100 px-1 rounded">NEXTAUTH_SECRET</code> to both Cloud Run services, then sign out and sign in again. See <code className="bg-amber-100 px-1 rounded">docs/AUTH_AND_ENV.md</code>.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => signOut({ callbackUrl: '/auth/signin' })} variant="outline" className="border-amber-300 text-amber-900 hover:bg-amber-100">
+                  Sign out and try again
+                </Button>
+                <Button onClick={() => { setUnauthorized(false); fetchDashboardData(); }} variant="ghost" className="text-amber-900">
+                  Retry
+                </Button>
+                <Button onClick={checkBackendAuth} variant="ghost" size="sm" className="text-amber-800">
+                  {backendAuthConfigured === null ? 'Check if backend has secret' : 'Re-check backend'}
+                </Button>
+              </div>
+              {backendAuthConfigured !== null && (
+                <p className="text-sm text-amber-900">
+                  Backend reports: <strong>{backendAuthConfigured ? 'auth configured (secret is set)' : 'auth not configured (NEXTAUTH_SECRET missing on Cloud Run)'}</strong>
+                  {!backendAuthConfigured && ' → Run ./scripts/set-backend-auth-secret.sh and redeploy backend if needed.'}
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,6 +11,7 @@ import {
   RefreshCw,
   Zap
 } from 'lucide-react';
+import { apiClient, WaitlistError, UnauthorizedError } from '@/lib/api-client';
 
 interface Connection {
   name: string;
@@ -19,16 +22,31 @@ interface Connection {
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Record<string, Connection>>({});
   const [loading, setLoading] = useState(true);
+  const [unauthorized, setUnauthorized] = useState(false);
+  const retryCount = useRef(0);
+  const router = useRouter();
 
   const fetchConnections = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-      const res = await fetch(`${apiUrl}/api/connections`);
-      const data = await res.json();
-      setConnections(data.connections || {});
+      const data = await apiClient.getConnections();
+      setConnections((data.connections || {}) as unknown as Record<string, Connection>);
+      setUnauthorized(false);
+      retryCount.current = 0;
       setLoading(false);
     } catch (error) {
       console.error('Error fetching connections:', error);
+      if (error instanceof WaitlistError) {
+        await signOut({ redirect: false });
+        router.replace('/waitlist');
+        return;
+      } else if (error instanceof UnauthorizedError) {
+        if (retryCount.current < 2) {
+          retryCount.current++;
+          setTimeout(fetchConnections, 1000);
+          return;
+        }
+        setUnauthorized(true);
+      }
       setLoading(false);
     }
   };
@@ -37,12 +55,38 @@ export default function ConnectionsPage() {
     fetchConnections();
   }, []);
 
-  if (loading) {
+  if (loading && !unauthorized) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
           <RefreshCw className="h-12 w-12 animate-spin mx-auto mb-4 text-black" />
           <p className="text-black/60">Loading connections...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (unauthorized) {
+    return (
+      <div className="min-h-full flex flex-col bg-white">
+        <div className="flex-shrink-0 h-16 flex items-center border-b border-black/10 bg-white" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <Card className="border-2 border-amber-200 bg-amber-50">
+            <CardHeader>
+              <CardTitle>Session could not be verified</CardTitle>
+              <CardDescription>
+                The backend could not verify your sign-in. On the cloud deployment, set <code className="bg-amber-100 px-1 rounded">NEXTAUTH_SECRET</code> on the backend (same as frontend). See <code className="bg-amber-100 px-1 rounded">docs/AUTH_AND_ENV.md</code>.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex gap-2">
+              <Button onClick={() => signOut({ callbackUrl: '/auth/signin' })} variant="outline" className="border-amber-300 text-amber-900 hover:bg-amber-100">
+                Sign out and try again
+              </Button>
+              <Button onClick={() => { setUnauthorized(false); fetchConnections(); }} variant="ghost" className="text-amber-900">
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,7 +19,8 @@ import {
   Activity
 } from 'lucide-react';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api-client';
+import { signOut } from 'next-auth/react';
+import { apiClient, WaitlistError, UnauthorizedError } from '@/lib/api-client';
 
 interface Booking {
   booking_id: string;
@@ -51,43 +53,49 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [unauthorized, setUnauthorized] = useState(false);
+  const retryCount = useRef(0);
+  const router = useRouter();
 
   const fetchAllBookings = async () => {
     try {
       setFetchError(null);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-      const res = await fetch(`${apiUrl}/api/dashboard/bookings`);
-
-      const contentType = res.headers.get('content-type');
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      if (!contentType?.includes('application/json')) {
-        throw new Error('Server did not return JSON');
-      }
-
-      const data = await res.json();
+      const data = await apiClient.getDashboardBookings();
 
       // Sort: processing first, then completed, newest first within each group
-      const bookings = (data.bookings || []).sort((a: Booking, b: Booking) => {
+      const rawBookings = (data.bookings || []) as unknown as Booking[];
+      const bookings = rawBookings.sort((a, b) => {
         if (a.status === 'processing' && b.status !== 'processing') return -1;
         if (a.status !== 'processing' && b.status === 'processing') return 1;
         return b.created_at - a.created_at;
       });
 
       setAllBookings(bookings);
+      retryCount.current = 0;
 
       if (!hasAutoExpanded) {
-        const processing = bookings.filter((b: Booking) => b.status === 'processing');
-        setExpandedTasks(new Set(processing.map((b: Booking) => b.booking_id)));
+        const processing = bookings.filter((b) => b.status === 'processing');
+        setExpandedTasks(new Set(processing.map((b) => b.booking_id)));
         setHasAutoExpanded(true);
       }
 
       setLoading(false);
     } catch (error) {
       console.error('Error fetching bookings:', error);
-      setFetchError(error instanceof Error ? error.message : 'Failed to fetch');
+      if (error instanceof WaitlistError) {
+        await signOut({ redirect: false });
+        router.replace('/waitlist');
+        return;
+      } else if (error instanceof UnauthorizedError) {
+        if (retryCount.current < 2) {
+          retryCount.current++;
+          setTimeout(fetchAllBookings, 1000);
+          return;
+        }
+        setUnauthorized(true);
+      } else {
+        setFetchError(error instanceof Error ? error.message : 'Failed to fetch');
+      }
       setAllBookings([]);
       setLoading(false);
     }
@@ -174,7 +182,23 @@ export default function TasksPage() {
       {/* Main Content: scrollable */}
       <div className="flex-1 min-h-0 overflow-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {fetchError && (
+        {unauthorized && (
+          <div className="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+            <p className="font-medium">Session could not be verified</p>
+            <p className="text-sm mt-1 text-amber-800">
+              On the cloud deployment, the backend often needs <code className="bg-amber-100 px-1 rounded">NEXTAUTH_SECRET</code> set (same as frontend). See <code className="bg-amber-100 px-1 rounded">docs/AUTH_AND_ENV.md</code>.
+            </p>
+            <div className="flex gap-2 mt-3">
+              <Button onClick={() => signOut({ callbackUrl: '/auth/signin' })} variant="outline" size="sm" className="border-amber-300 text-amber-900 hover:bg-amber-100">
+                Sign out and try again
+              </Button>
+              <Button onClick={() => { setUnauthorized(false); fetchAllBookings(); }} variant="ghost" size="sm" className="text-amber-900">
+                Retry
+              </Button>
+            </div>
+          </div>
+        )}
+        {!unauthorized && fetchError && (
           <div className="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
             <p className="font-medium">Couldn’t load tasks</p>
             <p className="text-sm mt-1 text-amber-800">{fetchError}</p>
@@ -187,7 +211,7 @@ export default function TasksPage() {
             </Button>
           </div>
         )}
-        {allBookings.length === 0 && !fetchError ? (
+        {!unauthorized && allBookings.length === 0 && !fetchError ? (
           <div className="text-center py-12">
             <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-black/20" />
             <h3 className="text-lg font-semibold text-black mb-2">
@@ -202,11 +226,11 @@ export default function TasksPage() {
               </Button>
             </Link>
           </div>
-        ) : allBookings.length === 0 && fetchError ? (
+        ) : !unauthorized && allBookings.length === 0 && fetchError ? (
           <div className="text-center py-12 text-black/60">
             <p>Fix the connection and click Retry above, or go to <Link href="/dashboard/chat" className="text-black underline">AI Chat</Link> to create a booking.</p>
           </div>
-        ) : (
+        ) : !unauthorized ? (
           <div className="space-y-4">
             {allBookings.map((task) => {
               const isExpanded = expandedTasks.has(task.booking_id);
@@ -411,7 +435,7 @@ export default function TasksPage() {
               );
             })}
           </div>
-        )}
+        ) : null}
         </div>
       </div>
     </div>
