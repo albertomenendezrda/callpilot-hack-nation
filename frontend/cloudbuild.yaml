@@ -1,10 +1,18 @@
 steps:
-  # Build the container image
+  # Build the container image (deploy script replaces NEXT_PUBLIC_API_URL; auth placeholders for build only - set real values in Cloud Run env)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '--build-arg'
       - 'NEXT_PUBLIC_API_URL=https://callpilot-backend-pxib5typta-uc.a.run.app'
+      - '--build-arg'
+      - 'NEXTAUTH_SECRET=build-placeholder-min-32-chars-for-nextauth'
+      - '--build-arg'
+      - 'NEXTAUTH_URL=https://placeholder.run.app'
+      - '--build-arg'
+      - 'GOOGLE_CLIENT_ID=build-placeholder'
+      - '--build-arg'
+      - 'GOOGLE_CLIENT_SECRET=build-placeholder'
       - '-t'
       - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
       - '.'
@@ -16,6 +24,9 @@ steps:
       - 'gcr.io/$PROJECT_ID/callpilot-frontend:latest'
 
   # Deploy to Cloud Run
+  # IMPORTANT: uses --update-env-vars (not --set-env-vars) so it does NOT wipe
+  # NEXTAUTH_SECRET, NEXTAUTH_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET etc.
+  # Those are set once via deploy-all.sh or scripts/set-backend-auth-secret.sh.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -29,7 +40,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
+      - '--update-env-vars'
       - 'NEXT_PUBLIC_API_URL=https://callpilot-backend-pxib5typta-uc.a.run.app'
 
 images:
@@ -37,3 +48,5 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  # Avoid OOM during next build (default machine can be too small)
+  machineType: E2_HIGHCPU_8

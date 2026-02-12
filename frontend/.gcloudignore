@@ -1,0 +1,16 @@
+# Reduce upload size for gcloud builds submit (same as .dockerignore)
+node_modules
+.next
+out
+dist
+.git
+.gitignore
+.env*.local
+.env.local.backup
+*.log
+.vscode
+.idea
+.DS_Store
+coverage
+.nyc_output
+README.md

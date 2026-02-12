@@ -29,7 +29,7 @@ steps:
       - '--allow-unauthenticated'
       - '--service-account'
       - 'callpilot-backend-sa@$PROJECT_ID.iam.gserviceaccount.com'
-      - '--set-env-vars'
+      - '--update-env-vars'
       - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
       - '--set-secrets'
       - 'ELEVENLABS_API_KEY=elevenlabs-api-key:latest,GOOGLE_CALENDAR_API_KEY=google-calendar-api-key:latest,GOOGLE_PLACES_API_KEY=google-places-api-key:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,TWILIO_ACCOUNT_SID=twilio-account-sid:latest,TWILIO_AUTH_TOKEN=twilio-auth-token:latest,TWILIO_PHONE_NUMBER=twilio-phone-number:latest,SECRET_KEY=jwt-secret-key:latest'
