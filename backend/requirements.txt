@@ -9,6 +9,7 @@ google-api-python-client>=2.108.0
 google-auth>=2.25.2
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
+google-cloud-firestore>=2.16.0
 googlemaps>=4.10.0
 twilio>=8.0.0
 requests>=2.31.0
