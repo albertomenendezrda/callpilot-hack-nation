@@ -298,9 +298,13 @@ Before going live, verify:
 - Use appropriate instance class (F2 recommended)
 
 ### Firestore
-- Use composite indexes for common queries
-- Implement document pagination
-- Archive old booking data
+- **One-time: create composite indexes** — After the first deploy using Firestore, create the required indexes so queries (e.g. Active tasks) don’t return “The query requires an index”. From the repo root run:
+  ```bash
+  ./scripts/create-firestore-indexes.sh
+  ```
+  Or use the link in the error message to create the index in the Firebase console. Index build can take a few minutes.
+- Use document pagination for very large collections
+- Archive old booking data if needed
 
 ### Cloud Build
 - Cache Docker layers
