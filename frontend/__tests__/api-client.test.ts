@@ -329,8 +329,9 @@ describe('ApiClient.getDashboardStats error handling', () => {
     fetchMock.mockResolvedValueOnce(
       mockResponse({ error: 'Internal server error' }, 500)
     );
-    await expect(client.getDashboardStats()).rejects.toThrow('Internal server error');
-    await expect(client.getDashboardStats()).rejects.not.toThrow(WaitlistError);
+    const promise = client.getDashboardStats();
+    await expect(promise).rejects.toThrow('Internal server error');
+    await expect(promise).rejects.not.toThrow(WaitlistError);
   });
 
   it('returns data on success', async () => {
