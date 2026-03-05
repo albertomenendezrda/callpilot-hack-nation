@@ -47,7 +47,7 @@ class TestHealthCheck:
         assert resp.status_code == 200
 
     def test_returns_healthy_status(self, client):
-        body = resp = client.get("/health")
+        resp = client.get("/health")
         assert resp.get_json()["status"] == "healthy"
 
     def test_returns_service_name(self, client):
